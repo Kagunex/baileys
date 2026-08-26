@@ -75,7 +75,7 @@ jobs:
 
       - name: Push
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_PAT: ${{ secrets.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 }}
         run: |
           set -e
 
