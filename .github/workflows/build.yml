@@ -1,0 +1,135 @@
+name: Extract ZIP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  workflows: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "================================"
+          echo "📦 MENCARI FILE ZIP"
+          echo "================================"
+
+          ZIP_COUNT=$(find . -maxdepth 1 -type f -iname "*.zip" | wc -l)
+
+          echo "Jumlah ZIP: $ZIP_COUNT"
+
+          if [ "$ZIP_COUNT" -eq 0 ]; then
+            echo "❌ Tidak ada file ZIP di root repository."
+            ls -la
+            exit 1
+          fi
+
+          if [ "$ZIP_COUNT" -gt 1 ]; then
+            echo "❌ Ada lebih dari satu ZIP:"
+            find . -maxdepth 1 -type f -iname "*.zip" -print
+            exit 1
+          fi
+
+          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" -print -quit)
+
+          echo "✅ ZIP ditemukan: $ZIP"
+
+          echo "ZIP_FILE=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Check ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "📦 File ZIP:"
+          ls -lh "$ZIP_FILE"
+
+          echo ""
+          echo "📋 Isi ZIP:"
+          unzip -l "$ZIP_FILE" | head -100
+
+          echo ""
+          echo "✅ ZIP valid"
+
+      - name: Extract ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "📦 Mengekstrak ZIP..."
+
+          mkdir -p extracted
+
+          unzip -o "$ZIP_FILE" -d extracted
+
+          echo "✅ Extract berhasil"
+
+      - name: Move Files ke Root
+        shell: bash
+        run: |
+          set -e
+
+          echo "📁 Memindahkan file ke root..."
+
+          shopt -s dotglob nullglob
+
+          cp -a extracted/. ./
+
+          rm -rf extracted
+
+          echo "✅ File berhasil dipindahkan"
+
+      - name: Hapus ZIP
+        shell: bash
+        run: |
+          set -e
+
+          echo "🗑️ Menghapus ZIP..."
+
+          rm -f "$ZIP_FILE"
+
+          echo "✅ ZIP dihapus"
+
+      - name: Show Result
+        shell: bash
+        run: |
+          echo "================================"
+          echo "📂 HASIL AKHIR"
+          echo "================================"
+
+          ls -la
+
+      - name: Commit Changes
+        shell: bash
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "ℹ️ Tidak ada perubahan."
+            exit 0
+          fi
+
+          git commit -m "Extract ZIP"
+
+          git push origin HEAD:${GITHUB_REF_NAME}
+
+          echo "================================"
+          echo "✅ SELESAI"
+          echo "================================"
