@@ -5,7 +5,6 @@ on:
 
 permissions:
   contents: write
-  workflows: write
 
 jobs:
   extract:
@@ -16,100 +15,152 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Find ZIP
         shell: bash
         run: |
           set -e
 
-          echo "================================"
-          echo "📦 MENCARI FILE ZIP"
-          echo "================================"
+          echo "======================================"
+          echo "        SEARCHING FOR ZIP"
+          echo "======================================"
 
           ZIP_COUNT=$(find . -maxdepth 1 -type f -iname "*.zip" | wc -l)
 
-          echo "Jumlah ZIP: $ZIP_COUNT"
+          echo "ZIP ditemukan: $ZIP_COUNT"
 
           if [ "$ZIP_COUNT" -eq 0 ]; then
             echo "❌ Tidak ada file ZIP di root repository."
+            echo ""
+            echo "File yang tersedia:"
             ls -la
             exit 1
           fi
 
           if [ "$ZIP_COUNT" -gt 1 ]; then
-            echo "❌ Ada lebih dari satu ZIP:"
+            echo "❌ Ada lebih dari satu file ZIP:"
             find . -maxdepth 1 -type f -iname "*.zip" -print
+            echo ""
+            echo "Sisakan satu ZIP saja."
             exit 1
           fi
 
           ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" -print -quit)
 
-          echo "✅ ZIP ditemukan: $ZIP"
+          echo "✅ ZIP ditemukan:"
+          echo "$ZIP"
 
           echo "ZIP_FILE=$ZIP" >> "$GITHUB_ENV"
 
-      - name: Check ZIP
+      - name: Validate ZIP
         shell: bash
         run: |
           set -e
 
-          echo "📦 File ZIP:"
+          echo "======================================"
+          echo "           VALIDATING ZIP"
+          echo "======================================"
+
           ls -lh "$ZIP_FILE"
 
           echo ""
-          echo "📋 Isi ZIP:"
-          unzip -l "$ZIP_FILE" | head -100
+          echo "Testing archive..."
+
+          unzip -t "$ZIP_FILE"
 
           echo ""
-          echo "✅ ZIP valid"
+          echo "✅ ZIP valid."
+
+      - name: Show ZIP Contents
+        shell: bash
+        run: |
+          echo "======================================"
+          echo "           ZIP CONTENTS"
+          echo "======================================"
+
+          unzip -l "$ZIP_FILE" | head -150
 
       - name: Extract ZIP
         shell: bash
         run: |
           set -e
 
-          echo "📦 Mengekstrak ZIP..."
+          echo "======================================"
+          echo "            EXTRACT ZIP"
+          echo "======================================"
 
+          rm -rf extracted
           mkdir -p extracted
 
           unzip -o "$ZIP_FILE" -d extracted
 
-          echo "✅ Extract berhasil"
+          echo ""
+          echo "✅ ZIP berhasil diekstrak."
 
-      - name: Move Files ke Root
+      - name: Move Files To Root
         shell: bash
         run: |
           set -e
 
-          echo "📁 Memindahkan file ke root..."
+          echo "======================================"
+          echo "        MOVE FILES TO ROOT"
+          echo "======================================"
 
           shopt -s dotglob nullglob
+
+          if [ -z "$(ls -A extracted)" ]; then
+            echo "❌ Folder extracted kosong."
+            exit 1
+          fi
 
           cp -a extracted/. ./
 
           rm -rf extracted
 
-          echo "✅ File berhasil dipindahkan"
+          echo "✅ Semua file dipindahkan ke root."
 
-      - name: Hapus ZIP
+      - name: Remove ZIP
         shell: bash
         run: |
           set -e
 
-          echo "🗑️ Menghapus ZIP..."
+          echo "======================================"
+          echo "             REMOVE ZIP"
+          echo "======================================"
 
           rm -f "$ZIP_FILE"
 
-          echo "✅ ZIP dihapus"
+          echo "✅ ZIP dihapus."
 
-      - name: Show Result
+      - name: Show Final Structure
         shell: bash
         run: |
-          echo "================================"
-          echo "📂 HASIL AKHIR"
-          echo "================================"
+          echo "======================================"
+          echo "          FINAL REPOSITORY"
+          echo "======================================"
 
-          ls -la
+          find . -maxdepth 2 \
+            -not -path "./.git/*" \
+            -print | sort | head -250
+
+      - name: Check GH_PAT
+        shell: bash
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_PAT" ]; then
+            echo "❌ GH_PAT belum dibuat."
+            echo ""
+            echo "Buat:"
+            echo "Settings → Secrets and variables → Actions"
+            echo "→ New repository secret"
+            echo ""
+            echo "Name: GH_PAT"
+            exit 1
+          fi
+
+          echo "✅ GH_PAT tersedia."
 
       - name: Commit Changes
         shell: bash
@@ -128,8 +179,25 @@ jobs:
 
           git commit -m "Extract ZIP"
 
-          git push origin HEAD:${GITHUB_REF_NAME}
+          echo "✅ Commit berhasil."
 
-          echo "================================"
-          echo "✅ SELESAI"
-          echo "================================"
+      - name: Push Changes
+        shell: bash
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "              PUSH"
+          echo "======================================"
+
+          git remote set-url origin \
+            "https://x-access-token:${GH_PAT}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          echo ""
+          echo "======================================"
+          echo "          ✅ EXTRACTION DONE"
+          echo "======================================"
