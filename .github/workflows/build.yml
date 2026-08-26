@@ -1,83 +1,53 @@
-name: Extract ZIP
+name: Build & Verify
 
 on:
+  push:
+    branches: [main, master]
+  pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  extract:
+  build:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        node-version: [20, 22]
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: ${{ matrix.node-version }}
+          cache: npm
 
-      - name: Find ZIP
-        shell: bash
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Assert dist outputs
         run: |
-          set -e
+          test -f dist/index.js
+          test -f dist/index.cjs
+          test -f dist/index.d.ts
+          ls -la dist/index.*
 
-          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" -print -quit)
-
-          if [ -z "$ZIP" ]; then
-            echo "❌ ZIP tidak ditemukan."
-            exit 1
-          fi
-
-          echo "ZIP_FILE=$ZIP" >> "$GITHUB_ENV"
-          echo "✅ ZIP ditemukan: $ZIP"
-
-      - name: Validate ZIP
+      - name: CommonJS require test
         run: |
-          set -e
-          unzip -t "$ZIP_FILE"
+          node -e "const b=require('./dist/index.cjs'); console.log(typeof b.default); console.log(typeof b.useMultiFileAuthState); if(typeof b.default!=='function'||typeof b.useMultiFileAuthState!=='function') process.exit(1)"
 
-      - name: Extract ZIP
-        shell: bash
+      - name: ESM import test
         run: |
-          set -e
+          node --input-type=module -e "import b from './dist/index.js'; import { useMultiFileAuthState } from './dist/index.js'; console.log(typeof b); console.log(typeof useMultiFileAuthState); if(typeof b!=='function'||typeof useMultiFileAuthState!=='function') process.exit(1)"
 
-          rm -rf extracted
-          mkdir extracted
+      - name: Package verify script
+        run: npm run verify
 
-          unzip -o "$ZIP_FILE" -d extracted
+      - name: Unit tests
+        run: npm test
 
-          # Jangan mengganti workflow GitHub yang sedang menjalankan Action
-          rm -rf extracted/.github/workflows
-
-          shopt -s dotglob nullglob
-
-          cp -a extracted/. ./
-
-          rm -rf extracted
-
-          echo "✅ ZIP berhasil diekstrak."
-
-      - name: Remove ZIP
-        run: |
-          rm -f "$ZIP_FILE"
-
-      - name: Commit & Push
-        shell: bash
-        run: |
-          set -e
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A
-
-          if git diff --cached --quiet; then
-            echo "ℹ️ Tidak ada perubahan."
-            exit 0
-          fi
-
-          git commit -m "Extract ZIP"
-
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
-          echo "✅ Extract dan push berhasil."
+      - name: npm pack dry-run
+        run: npm pack --dry-run
+        
