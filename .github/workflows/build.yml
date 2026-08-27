@@ -92,3 +92,12 @@ jobs:
 
           git commit -m "Extract KaguneX Baileys 1.8.1"
           git push
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Tidak ada perubahan."
+            exit 0
+          fi
+
+          git commit -m "Extract KaguneX Baileys 1.8.1"
+          git push
