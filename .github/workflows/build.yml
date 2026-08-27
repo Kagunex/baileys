@@ -1,12 +1,7 @@
-name: Extract ZIP
+name: Extract KaguneX Baileys ZIP
 
 on:
   workflow_dispatch:
-    inputs:
-      zip_file:
-        description: "Nama file ZIP di repository"
-        required: true
-        default: "project.zip"
 
 permissions:
   contents: write
@@ -16,37 +11,76 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check ZIP
+      - name: Find ZIP
+        id: zip
+        shell: bash
         run: |
-          if [ ! -f "${{ inputs.zip_file }}" ]; then
-            echo "ZIP tidak ditemukan: ${{ inputs.zip_file }}"
+          set -e
+
+          ZIP="kagunex-baileys-1.8.1-fixed.zip"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "::error::File $ZIP tidak ditemukan di root repository."
+            echo "ZIP yang tersedia:"
+            find . -maxdepth 2 -type f -iname "*.zip" -print
             exit 1
           fi
 
+          echo "file=$ZIP" >> "$GITHUB_OUTPUT"
+
       - name: Extract ZIP
+        shell: bash
         run: |
-          mkdir -p .extract
+          set -e
 
-          unzip -o "${{ inputs.zip_file }}" -d .extract
+          ZIP="${{ steps.zip.outputs.file }}"
+          TEMP_DIR="$(mktemp -d)"
 
-          shopt -s dotglob
-          cp -a .extract/* .
+          echo "Extracting $ZIP..."
+          unzip -q -o "$ZIP" -d "$TEMP_DIR"
 
-          rm -rf .extract
-          rm -f "${{ inputs.zip_file }}"
+          cp -a "$TEMP_DIR"/. .
 
-      - name: Show Structure
+          rm -rf "$TEMP_DIR"
+          rm -f "$ZIP"
+
+      - name: Verify project structure
+        shell: bash
         run: |
-          echo "=== Repository Structure ==="
-          find . -maxdepth 3 -type f \
-            -not -path './.git/*' \
+          set -e
+
+          test -f package.json
+          test -f tsconfig.json
+          test -f tsconfig.build.json
+          test -f scripts/build.mjs
+          test -f scripts/verify-package.mjs
+          test -d src
+          test -d WAProto
+
+          echo "=== package.json ==="
+
+          node -e '
+          const p = require("./package.json");
+          console.log("name:", p.name);
+          console.log("version:", p.version);
+          console.log("build:", p.scripts?.build);
+          console.log("verify:", p.scripts?.verify);
+          '
+
+          echo "=== Structure ==="
+
+          find . -maxdepth 2 -type f \
+            -not -path "./.git/*" \
             | sort
 
-      - name: Commit Changes
+      - name: Commit and push
+        shell: bash
         run: |
+          set -e
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -57,5 +91,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Extract ZIP"
+          git commit -m "Extract KaguneX Baileys 1.8.1"
           git push
