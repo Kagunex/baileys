@@ -1,6 +1,6 @@
 {
   "name": "@kagunex/baileys",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "KaguneX WhatsApp Web client library for Node.js (TypeScript)",
   "type": "module",
   "main": "./dist/index.cjs",
