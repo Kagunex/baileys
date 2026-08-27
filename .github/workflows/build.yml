@@ -5,7 +5,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   extract:
@@ -28,6 +27,7 @@ jobs:
           fi
 
       - name: Extract ZIP
+        shell: bash
         run: |
           set -e
 
@@ -37,15 +37,22 @@ jobs:
           echo "Extracting $ZIP..."
           unzip -q -o "$ZIP" -d "$TEMP_DIR"
 
+          echo "=== Isi hasil extract ==="
+          find "$TEMP_DIR" -maxdepth 2 -type f | sort
+
+          # Copy semua source dari ZIP
+          # KECUALI .github supaya workflow repository tidak tertimpa.
+          if [ -d "$TEMP_DIR/.github" ]; then
+            rm -rf "$TEMP_DIR/.github"
+          fi
+
           cp -a "$TEMP_DIR"/. .
 
           rm -rf "$TEMP_DIR"
 
-      - name: Verify files
+      - name: Verify project
         run: |
           set -e
-
-          echo "Checking project..."
 
           test -f package.json
           test -d src
@@ -54,7 +61,16 @@ jobs:
           test -f tsconfig.json
           test -f tsconfig.build.json
 
-          echo "Project berhasil diekstrak."
+          echo "================================"
+          echo "PROJECT BERHASIL DIEKSTRAK"
+          echo "================================"
+
+          echo "=== package.json ==="
+          node -e '
+            const p = require("./package.json");
+            console.log("Name:", p.name);
+            console.log("Version:", p.version);
+          '
 
       - name: Remove ZIP
         run: |
