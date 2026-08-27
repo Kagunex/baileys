@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   extract:
@@ -14,29 +15,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find ZIP
-        id: zip
-        shell: bash
+      - name: Check ZIP
         run: |
           set -e
 
           ZIP="kagunex-baileys-1.8.1-fixed.zip"
 
           if [ ! -f "$ZIP" ]; then
-            echo "::error::File $ZIP tidak ditemukan di root repository."
-            echo "ZIP yang tersedia:"
+            echo "::error::ZIP tidak ditemukan: $ZIP"
             find . -maxdepth 2 -type f -iname "*.zip" -print
             exit 1
           fi
 
-          echo "file=$ZIP" >> "$GITHUB_OUTPUT"
-
       - name: Extract ZIP
-        shell: bash
         run: |
           set -e
 
-          ZIP="${{ steps.zip.outputs.file }}"
+          ZIP="kagunex-baileys-1.8.1-fixed.zip"
           TEMP_DIR="$(mktemp -d)"
 
           echo "Extracting $ZIP..."
@@ -45,39 +40,27 @@ jobs:
           cp -a "$TEMP_DIR"/. .
 
           rm -rf "$TEMP_DIR"
-          rm -f "$ZIP"
 
-      - name: Verify project structure
-        shell: bash
+      - name: Verify files
         run: |
           set -e
 
+          echo "Checking project..."
+
           test -f package.json
-          test -f tsconfig.json
-          test -f tsconfig.build.json
-          test -f scripts/build.mjs
-          test -f scripts/verify-package.mjs
           test -d src
           test -d WAProto
+          test -d tests
+          test -f tsconfig.json
+          test -f tsconfig.build.json
 
-          echo "=== package.json ==="
+          echo "Project berhasil diekstrak."
 
-          node -e '
-          const p = require("./package.json");
-          console.log("name:", p.name);
-          console.log("version:", p.version);
-          console.log("build:", p.scripts?.build);
-          console.log("verify:", p.scripts?.verify);
-          '
+      - name: Remove ZIP
+        run: |
+          rm -f kagunex-baileys-1.8.1-fixed.zip
 
-          echo "=== Structure ==="
-
-          find . -maxdepth 2 -type f \
-            -not -path "./.git/*" \
-            | sort
-
-      - name: Commit and push
-        shell: bash
+      - name: Commit and Push
         run: |
           set -e
 
