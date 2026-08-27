@@ -2,17 +2,11 @@ KaguneX Baileys
 
 @kagunex/baileys "1.8.2" — WhatsApp Web client library for Node.js ≥ 18 (TypeScript).
 
-Independent implementation maintained by KaguneX.
+Independent implementation. Not a runtime dependency of WhiskeySockets/Baileys.
 
-Not a runtime dependency of WhiskeySockets/Baileys.
-
-Install
-
-Install the latest public release from NPM:
+Install (NPM — primary)
 
 npm install @kagunex/baileys
-
-Check the installed version:
 
 npm ls @kagunex/baileys
 # @kagunex/baileys@1.8.2
@@ -36,101 +30,32 @@ import makeWASocket, {
 console.log(typeof makeWASocket); // function
 console.log(typeof useMultiFileAuthState); // function
 
-GitHub
-
-Development source and repository:
-
-git clone https://github.com/Kagunex/baileys.git
-cd baileys
-npm install
-
-Or install directly from GitHub:
+GitHub (development / fallback)
 
 npm install github:Kagunex/baileys
 
-The NPM package identity is:
+Package identity remains "@kagunex/baileys@1.8.2".
 
-@kagunex/baileys@1.8.2
+Quick start
 
-Quick Start
+import makeWASocket, { useMultiFileAuthState } from "@kagunex/baileys";
 
-import makeWASocket, {
-  useMultiFileAuthState,
-} from "@kagunex/baileys";
-
-const { state, saveCreds } =
-  await useMultiFileAuthState("./auth");
-
-const sock = makeWASocket({
-  auth: state,
-});
+const { state, saveCreds } = await useMultiFileAuthState("./auth");
+const sock = makeWASocket({ auth: state });
 
 sock.ev.on("creds.update", saveCreds);
-
-sock.ev.on("connection.update", (update) => {
-  console.log("connection:", update.connection);
+sock.ev.on("connection.update", (u) => {
+  console.log("connection:", u.connection);
 });
 
-Authentication
-
-Keep the authentication directory out of Git.
-
-auth/
-
-Treat authentication credentials as sensitive information and never commit them to a public repository.
-
-Requirements
-
-- Node.js ≥ 18
-- NPM
-- TypeScript support
-- WhatsApp account for authentication
+Keep "./auth" out of git. Treat credentials as secret.
 
 Scripts
 
-Install dependencies:
-
 npm install
-
-Build the project:
-
-npm run build
-
-Run tests:
-
-npm test
-
-Run verification:
-
-npm run verify
-
-Development
-
-Clone the repository:
-
-git clone https://github.com/Kagunex/baileys.git
-cd baileys
-npm install
-
-Create your changes, test them, then build:
-
 npm run build
 npm test
 npm run verify
-
-Package
-
-NPM:
-
-@kagunex/baileys
-
-Current version:
-
-1.8.2
-
-GitHub:
-
-https://github.com/Kagunex/baileys
 
 License
 
