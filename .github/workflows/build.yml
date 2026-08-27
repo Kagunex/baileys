@@ -1,0 +1,94 @@
+name: Extract KaguneX Baileys ZIP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check ZIP
+        run: |
+          set -e
+
+          ZIP="kagunex-baileys-1.8.1-fixed.zip"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "::error::ZIP tidak ditemukan: $ZIP"
+            find . -maxdepth 2 -type f -iname "*.zip" -print
+            exit 1
+          fi
+
+      - name: Extract ZIP
+        shell: bash
+        run: |
+          set -e
+
+          ZIP="kagunex-baileys-1.8.1-fixed.zip"
+          TEMP_DIR="$(mktemp -d)"
+
+          echo "Extracting $ZIP..."
+          unzip -q -o "$ZIP" -d "$TEMP_DIR"
+
+          echo "=== Isi hasil extract ==="
+          find "$TEMP_DIR" -maxdepth 2 -type f | sort
+
+          # Copy semua source dari ZIP
+          # KECUALI .github supaya workflow repository tidak tertimpa.
+          if [ -d "$TEMP_DIR/.github" ]; then
+            rm -rf "$TEMP_DIR/.github"
+          fi
+
+          cp -a "$TEMP_DIR"/. .
+
+          rm -rf "$TEMP_DIR"
+
+      - name: Verify project
+        run: |
+          set -e
+
+          test -f package.json
+          test -d src
+          test -d WAProto
+          test -d tests
+          test -f tsconfig.json
+          test -f tsconfig.build.json
+
+          echo "================================"
+          echo "PROJECT BERHASIL DIEKSTRAK"
+          echo "================================"
+
+          echo "=== package.json ==="
+          node -e '
+            const p = require("./package.json");
+            console.log("Name:", p.name);
+            console.log("Version:", p.version);
+          '
+
+      - name: Remove ZIP
+        run: |
+          rm -f kagunex-baileys-1.8.1-fixed.zip
+
+      - name: Commit and Push
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Tidak ada perubahan."
+            exit 0
+          fi
+
+          git commit -m "Extract KaguneX Baileys 1.8.1"
+          git push
