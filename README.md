@@ -1,23 +1,24 @@
-# KaguneX Baileys
+KaguneX Baileys
 
-**@kagunex/baileys** `1.8.1` — WhatsApp Web client library for Node.js ≥ 18 (TypeScript).
+@kagunex/baileys "1.8.2" — WhatsApp Web client library for Node.js ≥ 18 (TypeScript).
 
-Independent implementation. Not a runtime dependency of WhiskeySockets/Baileys.
+Independent implementation maintained by KaguneX.
 
-## Install (NPM — primary)
+Not a runtime dependency of WhiskeySockets/Baileys.
 
-```bash
+Install
+
+Install the latest public release from NPM:
+
 npm install @kagunex/baileys
-```
 
-```bash
+Check the installed version:
+
 npm ls @kagunex/baileys
-# @kagunex/baileys@1.8.1
-```
+# @kagunex/baileys@1.8.2
 
-### CommonJS
+CommonJS
 
-```js
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -25,52 +26,112 @@ const {
 
 console.log(typeof makeWASocket); // function
 console.log(typeof useMultiFileAuthState); // function
-```
 
-### ESM
+ESM
 
-```js
 import makeWASocket, {
   useMultiFileAuthState,
 } from "@kagunex/baileys";
 
 console.log(typeof makeWASocket); // function
 console.log(typeof useMultiFileAuthState); // function
-```
 
-### GitHub (development / fallback)
+GitHub
 
-```bash
-npm install github:remzzxelipsce/Kagunex-baileys
-```
+Development source and repository:
 
-Package identity remains `@kagunex/baileys@1.8.1`.
+git clone https://github.com/Kagunex/baileys.git
+cd baileys
+npm install
 
-## Quick start
+Or install directly from GitHub:
 
-```ts
-import makeWASocket, { useMultiFileAuthState } from "@kagunex/baileys";
+npm install github:Kagunex/baileys
 
-const { state, saveCreds } = await useMultiFileAuthState("./auth");
-const sock = makeWASocket({ auth: state });
+The NPM package identity is:
+
+@kagunex/baileys@1.8.2
+
+Quick Start
+
+import makeWASocket, {
+  useMultiFileAuthState,
+} from "@kagunex/baileys";
+
+const { state, saveCreds } =
+  await useMultiFileAuthState("./auth");
+
+const sock = makeWASocket({
+  auth: state,
+});
 
 sock.ev.on("creds.update", saveCreds);
-sock.ev.on("connection.update", (u) => {
-  console.log("connection:", u.connection);
+
+sock.ev.on("connection.update", (update) => {
+  console.log("connection:", update.connection);
 });
-```
 
-Keep `./auth` out of git. Treat credentials as secret.
+Authentication
 
-## Scripts
+Keep the authentication directory out of Git.
 
-```bash
+auth/
+
+Treat authentication credentials as sensitive information and never commit them to a public repository.
+
+Requirements
+
+- Node.js ≥ 18
+- NPM
+- TypeScript support
+- WhatsApp account for authentication
+
+Scripts
+
+Install dependencies:
+
 npm install
+
+Build the project:
+
+npm run build
+
+Run tests:
+
+npm test
+
+Run verification:
+
+npm run verify
+
+Development
+
+Clone the repository:
+
+git clone https://github.com/Kagunex/baileys.git
+cd baileys
+npm install
+
+Create your changes, test them, then build:
+
 npm run build
 npm test
 npm run verify
-```
 
-## License
+Package
+
+NPM:
+
+@kagunex/baileys
+
+Current version:
+
+1.8.2
+
+GitHub:
+
+https://github.com/Kagunex/baileys
+
+License
 
 MIT © KaguneX
