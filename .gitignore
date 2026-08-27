@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+auth/
+auth_info*/
+*.log
+*.tmp
+.DS_Store
+coverage/
+.vitest/
+*.bak
+creds.json
+package-lock.json
