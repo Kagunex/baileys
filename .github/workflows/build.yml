@@ -1,111 +1,53 @@
-name: Extract ZIP
+name: Build & Verify
 
 on:
+  push:
+    branches: [main, master]
+  pull_request:
   workflow_dispatch:
-    inputs:
-      zip:
-        description: "Nama file ZIP di root repository"
-        required: true
-        type: string
-        default: "kagunex-baileys-1.8.3.zip"
-
-      delete_zip:
-        description: "Hapus ZIP setelah berhasil diekstrak?"
-        required: true
-        type: boolean
-        default: true
 
 jobs:
-  extract:
+  build:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
+    strategy:
+      matrix:
+        node-version: [20, 22]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: ${{ matrix.node-version }}
+          cache: npm
 
-      - name: Check ZIP
-        shell: bash
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Assert dist outputs
         run: |
-          set -e
+          test -f dist/index.js
+          test -f dist/index.cjs
+          test -f dist/index.d.ts
+          ls -la dist/index.*
 
-          ZIP="${{ inputs.zip }}"
-
-          if [ ! -f "$ZIP" ]; then
-            echo "ERROR: ZIP tidak ditemukan: $ZIP"
-            exit 1
-          fi
-
-          echo "ZIP ditemukan: $ZIP"
-
-      - name: Extract ZIP safely
-        shell: bash
+      - name: CommonJS require test
         run: |
-          set -e
+          node -e "const b=require('./dist/index.cjs'); console.log(typeof b.default); console.log(typeof b.useMultiFileAuthState); if(typeof b.default!=='function'||typeof b.useMultiFileAuthState!=='function') process.exit(1)"
 
-          ZIP="${{ inputs.zip }}"
-          TMP_DIR="$(mktemp -d)"
-
-          echo "Extracting $ZIP..."
-
-          unzip -q "$ZIP" -d "$TMP_DIR"
-
-          # Kalau ZIP memiliki satu folder utama, masuk ke folder tersebut
-          shopt -s dotglob nullglob
-          ITEMS=("$TMP_DIR"/*)
-
-          if [ "${#ITEMS[@]}" -eq 1 ] && [ -d "${ITEMS[0]}" ]; then
-            SOURCE="${ITEMS[0]}"
-          else
-            SOURCE="$TMP_DIR"
-          fi
-
-          echo "Source: $SOURCE"
-
-          # Copy semua isi ZIP kecuali workflow build.yml
-          # build.yml repository TIDAK akan ditimpa.
-          rsync -a \
-            --exclude='.github/workflows/build.yml' \
-            "$SOURCE/" "./"
-
-          rm -rf "$TMP_DIR"
-
-      - name: Verify protected workflow
-        shell: bash
+      - name: ESM import test
         run: |
-          set -e
+          node --input-type=module -e "import b from './dist/index.js'; import { useMultiFileAuthState } from './dist/index.js'; console.log(typeof b); console.log(typeof useMultiFileAuthState); if(typeof b!=='function'||typeof useMultiFileAuthState!=='function') process.exit(1)"
 
-          if [ ! -f ".github/workflows/build.yml" ]; then
-            echo "ERROR: build.yml hilang!"
-            exit 1
-          fi
+      - name: Package verify script
+        run: npm run verify
 
-          echo "build.yml tetap aman."
+      - name: Unit tests
+        run: npm test
 
-      - name: Remove ZIP
-        if: ${{ inputs.delete_zip }}
-        shell: bash
-        run: |
-          rm -f -- "${{ inputs.zip }}"
-
-      - name: Commit changes
-        shell: bash
-        run: |
-          set -e
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A
-
-          if git diff --cached --quiet; then
-            echo "Tidak ada perubahan."
-            exit 0
-          fi
-
-          git commit -m "Extract KaguneX Baileys ZIP"
-          git push
+      - name: npm pack dry-run
+        run: npm pack --dry-run
+        
