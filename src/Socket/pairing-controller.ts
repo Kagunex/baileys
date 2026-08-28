@@ -1,0 +1,212 @@
+/**
+ * Pairing request controller — stabilizes IQ send/wait/retry.
+ */
+
+import type { Logger } from "pino";
+import type { NoiseSession } from "../Noise/session.js";
+import type { AuthenticationCreds } from "../Types/Auth.js";
+import {
+  buildPairingCodeIq,
+  parsePairingPayload,
+  isPairingResponse,
+  pairingRetryDelayMs,
+  DEFAULT_PAIRING_MAX_ATTEMPTS,
+  DEFAULT_PAIRING_TIMEOUT_MS,
+  type PairingCodeRequest,
+  type PairingResult,
+} from "../Protocol/pairing.js";
+
+export type PairingSend = (plaintext: Buffer) => void;
+
+export type PairingController = {
+  /** Handle decrypted frame; resolve waiters if pairing-related */
+  onPayload: (payload: Buffer) => void;
+  /** Request code with retries until timeout */
+  requestCode: (
+    phoneNumber: string,
+    opts?: {
+      timeoutMs?: number;
+      maxAttempts?: number;
+      session: NoiseSession;
+      send: PairingSend;
+      creds?: AuthenticationCreds;
+    },
+  ) => Promise<string>;
+  /** Cancel all pending waiters */
+  cancelAll: (reason?: string) => void;
+  pendingCount: () => number;
+};
+
+type Waiter = {
+  iqIds: Set<string>;
+  resolve: (code: string) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+export function createPairingController(logger?: Logger): PairingController {
+  const waiters = new Set<Waiter>();
+
+  const cancelAll = (reason = "pairing cancelled") => {
+    for (const w of waiters) {
+      clearTimeout(w.timer);
+      w.reject(new Error(reason));
+    }
+    waiters.clear();
+  };
+
+  const onPayload = (payload: Buffer) => {
+    const parsed = parsePairingPayload(payload);
+    const matched: Waiter[] = [];
+
+    for (const w of waiters) {
+      const idMatch =
+        parsed.iqId && w.iqIds.has(parsed.iqId)
+          ? true
+          : isPairingResponse(payload, undefined, { acceptUnsolicitedCode: false });
+
+      // Prefer exact iq id match
+      if (parsed.iqId && w.iqIds.has(parsed.iqId)) {
+        matched.push(w);
+        continue;
+      }
+      // Fallback: any waiter if code present (single active pairing)
+      if (parsed.code && waiters.size === 1) {
+        matched.push(w);
+      }
+    }
+
+    for (const w of matched.length ? matched : []) {
+      if (parsed.errorCode && !parsed.code) {
+        clearTimeout(w.timer);
+        waiters.delete(w);
+        w.reject(
+          new Error(
+            `pairing error ${parsed.errorCode}${parsed.errorText ? `: ${parsed.errorText}` : ""}`,
+          ),
+        );
+        continue;
+      }
+      if (parsed.code) {
+        clearTimeout(w.timer);
+        waiters.delete(w);
+        // Do not log the full code at info — it is short-lived auth material
+        logger?.debug(
+          { codeLen: parsed.code.length, iqId: parsed.iqId },
+          "pairing code received",
+        );
+        w.resolve(parsed.code);
+      }
+    }
+  };
+
+  const requestCode: PairingController["requestCode"] = async (
+    phoneNumber,
+    opts,
+  ) => {
+    if (!opts?.session || !opts.send) {
+      throw new Error("pairing requires active Noise session");
+    }
+
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_PAIRING_TIMEOUT_MS;
+    const maxAttempts = opts.maxAttempts ?? DEFAULT_PAIRING_MAX_ATTEMPTS;
+    const deadline = Date.now() + timeoutMs;
+
+    const iqIds = new Set<string>();
+    let settled = false;
+
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        waiters.delete(waiter);
+        reject(new Error(`pairing code request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const waiter: Waiter = {
+        iqIds,
+        resolve: (code) => {
+          if (settled) return;
+          settled = true;
+          resolve(code);
+        },
+        reject: (err) => {
+          if (settled) return;
+          settled = true;
+          reject(err);
+        },
+        timer,
+      };
+      waiters.add(waiter);
+
+      const keys = opts.creds
+        ? {
+            companionEphemeralPub: Buffer.from(
+              opts.creds.pairingEphemeralKeyPair.public,
+            ),
+            companionAuthPub: Buffer.from(opts.creds.noiseKey.public),
+            platformDisplay: opts.creds.platform
+              ? String(opts.creds.platform)
+              : undefined,
+          }
+        : undefined;
+
+      const runAttempt = async (attempt: number) => {
+        if (settled) return;
+        if (Date.now() > deadline) {
+          clearTimeout(timer);
+          waiters.delete(waiter);
+          if (!settled) {
+            settled = true;
+            reject(new Error("pairing code request timed out"));
+          }
+          return;
+        }
+
+        const req: PairingCodeRequest = buildPairingCodeIq(phoneNumber, {
+          keys,
+          attempt,
+        });
+        iqIds.add(req.id);
+
+        try {
+          opts.send(req.encoded);
+          logger?.info(
+            { phone: req.phoneNumber, id: req.id, attempt, maxAttempts },
+            "pairing IQ sent",
+          );
+        } catch (err) {
+          logger?.warn({ err, attempt }, "pairing IQ send failed");
+          if (attempt >= maxAttempts) {
+            clearTimeout(timer);
+            waiters.delete(waiter);
+            if (!settled) {
+              settled = true;
+              reject(err instanceof Error ? err : new Error(String(err)));
+            }
+            return;
+          }
+        }
+
+        if (attempt < maxAttempts) {
+          const delay = pairingRetryDelayMs(attempt);
+          setTimeout(() => {
+            // Only retry if still waiting for code
+            if (!settled && waiters.has(waiter)) {
+              void runAttempt(attempt + 1);
+            }
+          }, delay);
+        }
+      };
+
+      void runAttempt(1);
+    });
+  };
+
+  return {
+    onPayload,
+    requestCode,
+    cancelAll,
+    pendingCount: () => waiters.size,
+  };
+}
