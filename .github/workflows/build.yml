@@ -1,53 +1,75 @@
-name: Build & Verify
+name: Delete Files or Folders
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      paths:
+        description: "File/folder yang mau dihapus, pisahkan dengan koma"
+        required: true
+        type: string
+        default: "old-file.txt,old-folder"
 
 jobs:
-  build:
+  delete:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20, 22]
+
+    permissions:
+      contents: write
+
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
+          fetch-depth: 0
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build
-        run: npm run build
-
-      - name: Assert dist outputs
+      - name: Delete selected paths
+        shell: bash
         run: |
-          test -f dist/index.js
-          test -f dist/index.cjs
-          test -f dist/index.d.ts
-          ls -la dist/index.*
+          set -e
 
-      - name: CommonJS require test
+          IFS=',' read -ra ITEMS <<< "${{ inputs.paths }}"
+
+          for item in "${ITEMS[@]}"; do
+            item="$(echo "$item" | xargs)"
+
+            if [ -z "$item" ]; then
+              continue
+            fi
+
+            # Jangan izinkan workflow menghapus workflow build utama
+            if [ "$item" = ".github/workflows/build.yml" ]; then
+              echo "ERROR: build.yml tidak boleh dihapus."
+              exit 1
+            fi
+
+            if [ "$item" = ".github/workflows" ]; then
+              echo "ERROR: folder workflows tidak boleh dihapus."
+              exit 1
+            fi
+
+            echo "Deleting: $item"
+
+            if [ -e "$item" ]; then
+              rm -rf -- "$item"
+            else
+              echo "Tidak ditemukan: $item"
+            fi
+          done
+
+      - name: Commit changes
+        shell: bash
         run: |
-          node -e "const b=require('./dist/index.cjs'); console.log(typeof b.default); console.log(typeof b.useMultiFileAuthState); if(typeof b.default!=='function'||typeof b.useMultiFileAuthState!=='function') process.exit(1)"
+          set -e
 
-      - name: ESM import test
-        run: |
-          node --input-type=module -e "import b from './dist/index.js'; import { useMultiFileAuthState } from './dist/index.js'; console.log(typeof b); console.log(typeof useMultiFileAuthState); if(typeof b!=='function'||typeof useMultiFileAuthState!=='function') process.exit(1)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Package verify script
-        run: npm run verify
+          git add -A
 
-      - name: Unit tests
-        run: npm test
+          if git diff --cached --quiet; then
+            echo "Tidak ada perubahan."
+            exit 0
+          fi
 
-      - name: npm pack dry-run
-        run: npm pack --dry-run
-        
+          git commit -m "Delete selected files/folders"
+          git push
