@@ -1,13 +1,7 @@
-name: Delete Files or Folders
+name: Delete Files and Folders
 
 on:
   workflow_dispatch:
-    inputs:
-      paths:
-        description: "File/folder yang mau dihapus, pisahkan dengan koma"
-        required: true
-        type: string
-        default: "old-file.txt,old-folder"
 
 jobs:
   delete:
@@ -17,46 +11,37 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Delete selected paths
+      - name: Delete Files and Folders
         shell: bash
         run: |
           set -e
 
-          IFS=',' read -ra ITEMS <<< "${{ inputs.paths }}"
+          # Daftar file/folder yang ingin dihapus
+          ITEMS=(
+            "old-file.txt"
+            "old-folder"
+            "tests"
+            "Example"
+          )
 
           for item in "${ITEMS[@]}"; do
-            item="$(echo "$item" | xargs)"
-
-            if [ -z "$item" ]; then
-              continue
-            fi
-
-            # Jangan izinkan workflow menghapus workflow build utama
-            if [ "$item" = ".github/workflows/build.yml" ]; then
-              echo "ERROR: build.yml tidak boleh dihapus."
-              exit 1
-            fi
-
-            if [ "$item" = ".github/workflows" ]; then
-              echo "ERROR: folder workflows tidak boleh dihapus."
-              exit 1
-            fi
-
-            echo "Deleting: $item"
-
-            if [ -e "$item" ]; then
+            if [ -e "$item" ] || [ -L "$item" ]; then
+              echo "🗑️ Menghapus: $item"
               rm -rf -- "$item"
             else
-              echo "Tidak ditemukan: $item"
+              echo "⚠️ Tidak ditemukan: $item"
             fi
           done
 
-      - name: Commit changes
+      - name: Show Changes
+        run: git status --short
+
+      - name: Commit and Push
         shell: bash
         run: |
           set -e
@@ -71,5 +56,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Delete selected files/folders"
+          git commit -m "Delete selected files and folders"
           git push
