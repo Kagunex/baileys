@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       zip_file:
-        description: "Nama ZIP"
+        description: "Nama file ZIP"
         required: true
         default: "kagunex-baileys-1.8.3-pairing-stable.zip"
 
@@ -24,40 +24,81 @@ jobs:
       - name: Install unzip
         run: sudo apt-get update && sudo apt-get install -y unzip
 
-      - name: Check ZIP
+      - name: Extract ZIP
+        shell: bash
         run: |
-          if [ ! -f "${{ inputs.zip_file }}" ]; then
-            echo "❌ ZIP tidak ditemukan"
+          set -e
+
+          ZIP="${{ inputs.zip_file }}"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "❌ ZIP tidak ditemukan: $ZIP"
             exit 1
           fi
 
-      - name: Extract ZIP
-        run: |
-          rm -rf extracted
-          mkdir extracted
+          rm -rf .extract_tmp
+          mkdir -p .extract_tmp
 
-          unzip -q "${{ inputs.zip_file }}" -d extracted
+          unzip -q "$ZIP" -d .extract_tmp
 
-          # Jika ZIP memiliki satu folder root,
-          # gunakan isi folder tersebut.
-          ROOT="extracted"
+          ROOT=".extract_tmp"
 
-          COUNT=$(find extracted -mindepth 1 -maxdepth 1 -type d | wc -l)
-          FILES=$(find extracted -mindepth 1 -maxdepth 1 -type f | wc -l)
+          DIRS=$(find .extract_tmp -mindepth 1 -maxdepth 1 -type d | wc -l)
+          FILES=$(find .extract_tmp -mindepth 1 -maxdepth 1 -type f | wc -l)
 
-          if [ "$COUNT" -eq 1 ] && [ "$FILES" -eq 0 ]; then
-            ROOT=$(find extracted -mindepth 1 -maxdepth 1 -type d | head -1)
+          if [ "$DIRS" -eq 1 ] && [ "$FILES" -eq 0 ]; then
+            ROOT=$(find .extract_tmp -mindepth 1 -maxdepth 1 -type d | head -n 1)
           fi
+
+          echo "ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Replace Repository Contents
+        shell: bash
+        run: |
+          set -e
+
+          echo "🗑️ Menghapus file/folder lama..."
+
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name ".git" \
+            ! -name ".extract_tmp" \
+            ! -name "${{ inputs.zip_file }}" \
+            -exec rm -rf {} +
+
+          echo "📦 Menyalin isi ZIP..."
 
           cp -a "$ROOT"/. .
 
-          rm -rf extracted
+          rm -rf .extract_tmp
 
-      - name: Commit
+          echo "✅ Extract selesai."
+
+      - name: Protect Existing build.yml
+        shell: bash
+        run: |
+          # build.yml yang sudah ada di repository tidak boleh
+          # dihapus oleh proses extract.
+          git checkout HEAD -- .github/workflows/build.yml 2>/dev/null || true
+
+      - name: Show Structure
+        run: |
+          echo "===== FINAL STRUCTURE ====="
+          find . -maxdepth 3 \
+            -not -path "./.git/*" \
+            | sort | head -300
+
+      - name: Commit & Push
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -A
-          git commit -m "chore: extract ZIP" || echo "Nothing to commit"
-          git push
+
+          if git diff --cached --quiet; then
+            echo "ℹ️ Tidak ada perubahan."
+            exit 0
+          fi
+
+          git commit -m "chore: extract ZIP and replace repository"
+          git push origin HEAD:${GITHUB_REF_NAME}
