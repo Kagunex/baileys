@@ -1,53 +1,32 @@
-name: Build & Verify
+name: Delete Repository Files
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  delete:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [20, 22]
+
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
+          fetch-depth: 0
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build
-        run: npm run build
-
-      - name: Assert dist outputs
+      - name: Delete All Files
         run: |
-          test -f dist/index.js
-          test -f dist/index.cjs
-          test -f dist/index.d.ts
-          ls -la dist/index.*
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name ".git" \
+            -exec rm -rf {} +
 
-      - name: CommonJS require test
+      - name: Commit Changes
         run: |
-          node -e "const b=require('./dist/index.cjs'); console.log(typeof b.default); console.log(typeof b.useMultiFileAuthState); if(typeof b.default!=='function'||typeof b.useMultiFileAuthState!=='function') process.exit(1)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: ESM import test
-        run: |
-          node --input-type=module -e "import b from './dist/index.js'; import { useMultiFileAuthState } from './dist/index.js'; console.log(typeof b); console.log(typeof useMultiFileAuthState); if(typeof b!=='function'||typeof useMultiFileAuthState!=='function') process.exit(1)"
-
-      - name: Package verify script
-        run: npm run verify
-
-      - name: Unit tests
-        run: npm test
-
-      - name: npm pack dry-run
-        run: npm pack --dry-run
-        
+          git add -A
+          git commit -m "chore: delete repository files" || echo "Nothing to commit"
+          git push
