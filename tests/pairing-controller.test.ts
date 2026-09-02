@@ -452,11 +452,7 @@ describe(
         maxAttempts: 1,
       });
 
-      // Pasang assertion rejects SEBELUM memicu timeout
-      const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/i);
-
       await vi.advanceTimersByTimeAsync(0);
-
       expect(sent.length).toBe(1);
 
       // IQ ID salah → harus diabaikan
@@ -473,8 +469,16 @@ describe(
       // Trigger timeout
       await vi.advanceTimersByTimeAsync(5_000);
 
-      // Tunggu rejection tertangani
-      await rejection;
+      try {
+        await p;
+        // Jika tidak reject, test gagal
+        expect.unreachable("Expected request to reject on timeout");
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toMatch(
+          /timed out|PAIRING FAILED/i,
+        );
+      }
 
       expect(ctrl.pendingCount()).toBe(0);
       expect(ctrl.isBusy()).toBe(false);
@@ -492,11 +496,7 @@ describe(
         maxAttempts: 1,
       });
 
-      // Pasang assertion rejects SEBELUM memicu timeout
-      const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/i);
-
       await vi.advanceTimersByTimeAsync(0);
-
       expect(sent.length).toBe(1);
 
       const { decodeBinaryNode } =
@@ -515,8 +515,15 @@ describe(
       // Trigger timeout
       await vi.advanceTimersByTimeAsync(3_000);
 
-      // Tunggu rejection tertangani
-      await rejection;
+      try {
+        await p;
+        expect.unreachable("Expected request to reject on timeout");
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toMatch(
+          /timed out|PAIRING FAILED/i,
+        );
+      }
 
       // Response datang SETELAH timeout
       expect(() => {
