@@ -442,113 +442,97 @@ describe(
 
 
     it("TEST 5: response with wrong IQ id is ignored", async () => {
-  const ctrl = createPairingController();
-  const sent: Buffer[] = [];
+      const ctrl = createPairingController();
+      const sent: Buffer[] = [];
 
-  const p = ctrl.requestCode("6281234567890", {
-    session: fakeSession(),
-    send: (b) => sent.push(b),
-    timeoutMs: 5_000,
-    maxAttempts: 1,
-  });
+      const p = ctrl.requestCode("6281234567890", {
+        session: fakeSession(),
+        send: (b) => sent.push(b),
+        timeoutMs: 5_000,
+        maxAttempts: 1,
+      });
 
-  // Tangani rejection LANGSUNG
-  let error: unknown;
+      // Pasang assertion rejects SEBELUM memicu timeout
+      const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/i);
 
-  const handled = p.catch((err) => {
-    error = err;
-  });
+      await vi.advanceTimersByTimeAsync(0);
 
-  await vi.advanceTimersByTimeAsync(0);
+      expect(sent.length).toBe(1);
 
-  expect(sent.length).toBe(1);
+      // IQ ID salah → harus diabaikan
+      ctrl.onPayload(
+        makeCodeResultNode(
+          "WRONG_ID_XXXX",
+          "ABCD1234",
+        ),
+      );
 
-  // IQ ID salah → harus diabaikan
-  ctrl.onPayload(
-    makeCodeResultNode(
-      "WRONG_ID_XXXX",
-      "ABCD1234",
-    ),
-  );
+      expect(ctrl.pendingCount()).toBe(1);
+      expect(ctrl.isBusy()).toBe(true);
 
-  expect(ctrl.pendingCount()).toBe(1);
-  expect(ctrl.isBusy()).toBe(true);
+      // Trigger timeout
+      await vi.advanceTimersByTimeAsync(5_000);
 
-  // Trigger timeout
-  await vi.advanceTimersByTimeAsync(5_000);
+      // Tunggu rejection tertangani
+      await rejection;
 
-  // Tunggu Promise rejection selesai ditangani
-  await handled;
-
-  expect(error).toBeInstanceOf(Error);
-  expect((error as Error).message).toMatch(
-    /timed out|PAIRING FAILED/i,
-  );
-
-  expect(ctrl.pendingCount()).toBe(0);
-  expect(ctrl.isBusy()).toBe(false);
-});
+      expect(ctrl.pendingCount()).toBe(0);
+      expect(ctrl.isBusy()).toBe(false);
+    });
 
 
     it("TEST 6: response after timeout is ignored (no throw)", async () => {
-  const ctrl = createPairingController();
-  const sent: Buffer[] = [];
+      const ctrl = createPairingController();
+      const sent: Buffer[] = [];
 
-  const p = ctrl.requestCode("6281234567890", {
-    session: fakeSession(),
-    send: (b) => sent.push(b),
-    timeoutMs: 3_000,
-    maxAttempts: 1,
-  });
+      const p = ctrl.requestCode("6281234567890", {
+        session: fakeSession(),
+        send: (b) => sent.push(b),
+        timeoutMs: 3_000,
+        maxAttempts: 1,
+      });
 
-  // Tangani rejection LANGSUNG
-  let error: unknown;
+      // Pasang assertion rejects SEBELUM memicu timeout
+      const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/i);
 
-  const handled = p.catch((err) => {
-    error = err;
-  });
+      await vi.advanceTimersByTimeAsync(0);
 
-  await vi.advanceTimersByTimeAsync(0);
+      expect(sent.length).toBe(1);
 
-  expect(sent.length).toBe(1);
+      const { decodeBinaryNode } =
+        await import("../src/WABinary/decode.js");
 
-  const { decodeBinaryNode } =
-    await import("../src/WABinary/decode.js");
+      const { getBinaryNodeAttr } =
+        await import("../src/WABinary/index.js");
 
-  const { getBinaryNodeAttr } =
-    await import("../src/WABinary/index.js");
+      const iqId = getBinaryNodeAttr(
+        decodeBinaryNode(sent[0]!),
+        "id",
+      )!;
 
-  const iqId = getBinaryNodeAttr(
-    decodeBinaryNode(sent[0]!),
-    "id",
-  )!;
+      expect(iqId).toBeTruthy();
 
-  expect(iqId).toBeTruthy();
+      // Trigger timeout
+      await vi.advanceTimersByTimeAsync(3_000);
 
-  // Trigger timeout
-  await vi.advanceTimersByTimeAsync(3_000);
+      // Tunggu rejection tertangani
+      await rejection;
 
-  // Pastikan rejection sudah ditangani
-  await handled;
+      // Response datang SETELAH timeout
+      expect(() => {
+        ctrl.onPayload(
+          makeCodeResultNode(
+            iqId,
+            "LATECODE",
+          ),
+        );
+      }).not.toThrow();
 
-  expect(error).toBeInstanceOf(Error);
-  expect((error as Error).message).toMatch(
-    /timed out|PAIRING FAILED/i,
-  );
+      expect(ctrl.pendingCount()).toBe(0);
+      expect(ctrl.isBusy()).toBe(false);
+    });
 
-  // Response datang SETELAH timeout
-  expect(() => {
-    ctrl.onPayload(
-      makeCodeResultNode(
-        iqId,
-        "LATECODE",
-      ),
-    );
-  }).not.toThrow();
 
-  expect(ctrl.pendingCount()).toBe(0);
-  expect(ctrl.isBusy()).toBe(false);
-});
     it(
       "TEST 7: local phone number is normalized",
       async () => {
