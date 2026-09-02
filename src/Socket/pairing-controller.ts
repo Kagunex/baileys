@@ -1,994 +1,683 @@
-import {
-  describe,
-  it,
-  expect,
-  vi,
-  beforeEach,
-  afterEach,
-} from "vitest";
+import type { AuthenticationCreds } from "../Types/Auth.js";
+import type { NoiseSession } from "../Noise/session.js";
+import type { BinaryNode } from "../WABinary/types.js";
 
 import {
-  createPairingController,
-} from "../src/Socket/pairing-controller.js";
+  decodeBinaryNode,
+} from "../WABinary/decode.js";
+
+import {
+  getBinaryNodeAttr,
+  getBinaryNodeChild,
+  getBinaryNodeChildBuffer,
+} from "../WABinary/index.js";
 
 import {
   normalizePairingCode,
-} from "../src/Protocol/pairing.js";
+  makePairingNode,
+} from "../Protocol/pairing.js";
 
-import {
-  encodeBinaryNode,
-} from "../src/WABinary/encode.js";
+type SendFn = (buffer: Buffer) => void | Promise<void>;
 
-import type {
-  BinaryNode,
-} from "../src/WABinary/types.js";
+export interface PairingControllerOptions {
+  session: NoiseSession;
+  send: SendFn;
+  creds?: AuthenticationCreds;
 
-import type {
-  NoiseSession,
-} from "../src/Noise/session.js";
-
-import type {
-  AuthenticationCreds,
-} from "../src/Types/Auth.js";
-
-
-function fakeSession(): NoiseSession {
-  return {
-    seal: (buffer: Buffer) => buffer,
-    open: () => [],
-  } as unknown as NoiseSession;
+  timeoutMs?: number;
+  maxAttempts?: number;
 }
 
+interface ActiveFlow {
+  phoneNumber: string;
 
-function makeCodeResultNode(
-  iqId: string,
-  code: string,
-): Buffer {
-  const node: BinaryNode = {
-    tag: "iq",
+  session: NoiseSession;
+  send: SendFn;
+  creds?: AuthenticationCreds;
 
-    attrs: {
-      id: iqId,
-      type: "result",
-      from: "s.whatsapp.net",
-    },
+  timeoutMs: number;
+  maxAttempts: number;
 
-    content: [
-      {
-        tag: "link_code_companion_reg",
-        attrs: {},
-        content: [
-          {
-            tag: "link_code_pairing_code",
-            attrs: {},
-            content: code.replace(/-/g, ""),
-          },
-        ],
-      },
-    ],
-  };
+  settled: boolean;
 
-  return encodeBinaryNode(node);
+  activeIqId?: string;
+
+  overallTimer?: ReturnType<typeof setTimeout>;
+  attemptTimer?: ReturnType<typeof setTimeout>;
+
+  resolve: (code: string) => void;
+  reject: (error: Error) => void;
 }
 
+export interface PairingController {
+  requestCode(
+    phoneNumber: string,
+    options: PairingControllerOptions,
+  ): Promise<string>;
 
-describe("pairing-controller", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+  onPayload(payload: Buffer | BinaryNode): void;
 
+  cancelAll(reason?: string): void;
 
-  afterEach(() => {
-    vi.clearAllTimers();
-    vi.useRealTimers();
-  });
+  isBusy(): boolean;
 
+  pendingCount(): number;
+}
 
-  it(
-    "TEST 1: returns pairing code on matching IQ response",
-    async () => {
-      const ctrl =
-        createPairingController();
+function createIqId(): string {
+  return `pair-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+}
 
-      const sent: Buffer[] = [];
+function normalizePhoneNumber(
+  phoneNumber: string,
+): string {
+  return phoneNumber.replace(/\D/g, "");
+}
 
-      const p =
-        ctrl.requestCode(
-          "6281234567890",
-          {
-            session: fakeSession(),
+function validatePhoneNumber(
+  phoneNumber: string,
+): boolean {
+  const normalized =
+    normalizePhoneNumber(phoneNumber);
 
-            send: (buffer) => {
-              sent.push(buffer);
-            },
+  return (
+    normalized.length >= 8 &&
+    normalized.length <= 15
+  );
+}
 
-            timeoutMs: 30_000,
-            maxAttempts: 1,
-          },
-        );
+function getErrorMessage(
+  error: unknown,
+): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
 
-      await vi.advanceTimersByTimeAsync(0);
+  return String(error);
+}
 
-      expect(
-        sent.length,
-      ).toBe(1);
+function createTimeoutError(
+  timeoutMs: number,
+): Error {
+  return new Error(
+    `PAIRING FAILED: pairing code request timed out after ${timeoutMs}ms`,
+  );
+}
 
-      const {
-        decodeBinaryNode,
-      } = await import(
-        "../src/WABinary/decode.js"
-      );
+function createCancelledError(
+  reason: string,
+): Error {
+  return new Error(
+    `PAIRING CANCELLED: ${reason}`,
+  );
+}
 
-      const {
-        getBinaryNodeAttr,
-      } = await import(
-        "../src/WABinary/index.js"
-      );
+function extractPairingCode(
+  node: BinaryNode,
+): string | undefined {
+  const registration =
+    getBinaryNodeChild(
+      node,
+      "link_code_companion_reg",
+    );
 
-      const node =
-        decodeBinaryNode(
-          sent[0]!,
-        );
+  if (!registration) {
+    return undefined;
+  }
 
-      const iqId =
-        getBinaryNodeAttr(
-          node,
-          "id",
-        );
+  const pairingCode =
+    getBinaryNodeChild(
+      registration,
+      "link_code_pairing_code",
+    );
 
-      expect(
-        iqId,
-      ).toBeTruthy();
+  if (!pairingCode) {
+    return undefined;
+  }
 
-      ctrl.onPayload(
-        makeCodeResultNode(
-          iqId!,
-          "ABCD1234",
+  const raw =
+    getBinaryNodeChildBuffer(
+      registration,
+      "link_code_pairing_code",
+    );
+
+  if (raw) {
+    return normalizePairingCode(
+      raw.toString(),
+    );
+  }
+
+  if (
+    typeof pairingCode.content === "string"
+  ) {
+    return normalizePairingCode(
+      pairingCode.content,
+    );
+  }
+
+  return undefined;
+}
+
+export function createPairingController(): PairingController {
+  let active: ActiveFlow | undefined;
+
+  function cleanupFlow(
+    flow: ActiveFlow,
+  ): void {
+    if (flow.overallTimer) {
+      clearTimeout(flow.overallTimer);
+      flow.overallTimer = undefined;
+    }
+
+    if (flow.attemptTimer) {
+      clearTimeout(flow.attemptTimer);
+      flow.attemptTimer = undefined;
+    }
+
+    flow.activeIqId = undefined;
+
+    if (active === flow) {
+      active = undefined;
+    }
+  }
+
+  function settleResolve(
+    flow: ActiveFlow,
+    code: string,
+  ): void {
+    if (flow.settled) {
+      return;
+    }
+
+    flow.settled = true;
+
+    cleanupFlow(flow);
+
+    flow.resolve(
+      normalizePairingCode(code),
+    );
+  }
+
+  function settleReject(
+    flow: ActiveFlow,
+    error: Error,
+  ): void {
+    if (flow.settled) {
+      return;
+    }
+
+    flow.settled = true;
+
+    cleanupFlow(flow);
+
+    /*
+     * IMPORTANT:
+     * Reject only the original Promise.
+     *
+     * No background Promise is allowed
+     * to reject from this controller.
+     */
+    flow.reject(error);
+  }
+
+  function pairingRetryDelayMs(
+    attempt: number,
+  ): number {
+    return Math.min(
+      500 * Math.pow(2, attempt - 1),
+      8_000,
+    );
+  }
+
+  function runAttempt(
+    flow: ActiveFlow,
+    attempt: number,
+  ): void {
+    /*
+     * Intentionally NOT async.
+     *
+     * This is important because an async
+     * fire-and-forget function can create an
+     * unhandled rejection.
+     */
+    if (
+      flow.settled ||
+      active !== flow
+    ) {
+      return;
+    }
+
+    if (
+      attempt > flow.maxAttempts
+    ) {
+      settleReject(
+        flow,
+        new Error(
+          `PAIRING FAILED: maximum attempts (${flow.maxAttempts}) reached`,
         ),
       );
+
+      return;
+    }
+
+    const iqId = createIqId();
+
+    flow.activeIqId = iqId;
+
+    const startedAt =
+      Date.now();
+
+    const remaining =
+      Math.max(
+        1,
+        flow.timeoutMs -
+          (startedAt -
+            startedAt),
+      );
+
+    const attemptWindow =
+      Math.min(
+        Math.max(
+          pairingRetryDelayMs(attempt),
+          5_000,
+        ),
+        remaining,
+      );
+
+    let payload: Buffer;
+
+    try {
+      payload = makePairingNode(
+        flow.phoneNumber,
+        iqId,
+      );
+    } catch (error) {
+      handleAttemptFailure(
+        flow,
+        attempt,
+        error,
+      );
+
+      return;
+    }
+
+    try {
+      const result =
+        flow.send(payload);
+
+      /*
+       * If send() returns a Promise,
+       * consume its rejection here.
+       */
+      if (
+        result &&
+        typeof (
+          result as Promise<void>
+        ).then === "function"
+      ) {
+        Promise.resolve(result).catch(
+          (error) => {
+            handleAttemptFailure(
+              flow,
+              attempt,
+              error,
+            );
+          },
+        );
+      }
+    } catch (error) {
+      handleAttemptFailure(
+        flow,
+        attempt,
+        error,
+      );
+
+      return;
+    }
+
+    flow.attemptTimer =
+      setTimeout(() => {
+        if (
+          flow.settled ||
+          active !== flow
+        ) {
+          return;
+        }
+
+        if (
+          flow.activeIqId !== iqId
+        ) {
+          return;
+        }
+
+        flow.activeIqId =
+          undefined;
+
+        if (
+          attempt >= flow.maxAttempts
+        ) {
+          settleReject(
+            flow,
+            createTimeoutError(
+              flow.timeoutMs,
+            ),
+          );
+
+          return;
+        }
+
+        const delay =
+          pairingRetryDelayMs(
+            attempt,
+          );
+
+        setTimeout(() => {
+          runAttempt(
+            flow,
+            attempt + 1,
+          );
+        }, delay);
+      }, attemptWindow);
+  }
+
+  function handleAttemptFailure(
+    flow: ActiveFlow,
+    attempt: number,
+    error: unknown,
+  ): void {
+    if (
+      flow.settled ||
+      active !== flow
+    ) {
+      return;
+    }
+
+    if (
+      attempt >= flow.maxAttempts
+    ) {
+      settleReject(
+        flow,
+        new Error(
+          `PAIRING FAILED: ${getErrorMessage(
+            error,
+          )}`,
+        ),
+      );
+
+      return;
+    }
+
+    flow.activeIqId =
+      undefined;
+
+    if (flow.attemptTimer) {
+      clearTimeout(
+        flow.attemptTimer,
+      );
+
+      flow.attemptTimer =
+        undefined;
+    }
+
+    const delay =
+      pairingRetryDelayMs(
+        attempt,
+      );
+
+    setTimeout(() => {
+      runAttempt(
+        flow,
+        attempt + 1,
+      );
+    }, delay);
+  }
+
+  function requestCode(
+    phoneNumber: string,
+    options: PairingControllerOptions,
+  ): Promise<string> {
+    const normalized =
+      normalizePhoneNumber(
+        phoneNumber,
+      );
+
+    if (
+      !validatePhoneNumber(
+        normalized,
+      )
+    ) {
+      return Promise.reject(
+        new Error(
+          "Invalid phone number",
+        ),
+      );
+    }
+
+    if (
+      options.creds?.registered
+    ) {
+      return Promise.reject(
+        new Error(
+          "Pairing cannot be requested: credentials are already registered",
+        ),
+      );
+    }
+
+    if (active) {
+      return Promise.reject(
+        new Error(
+          "PAIRING_ALREADY_IN_PROGRESS",
+        ),
+      );
+    }
+
+    const timeoutMs =
+      Math.max(
+        options.timeoutMs ?? 60_000,
+        1,
+      );
+
+    const maxAttempts =
+      Math.max(
+        options.maxAttempts ?? 3,
+        1,
+      );
+
+    return new Promise<string>(
+      (resolve, reject) => {
+        const flow: ActiveFlow = {
+          phoneNumber: normalized,
+
+          session:
+            options.session,
+
+          send:
+            options.send,
+
+          creds:
+            options.creds,
+
+          timeoutMs,
+          maxAttempts,
+
+          settled: false,
+
+          resolve,
+          reject,
+        };
+
+        active = flow;
+
+        /*
+         * Overall timeout is the final
+         * authority for the whole flow.
+         */
+        flow.overallTimer =
+          setTimeout(() => {
+            if (
+              flow.settled ||
+              active !== flow
+            ) {
+              return;
+            }
+
+            settleReject(
+              flow,
+              createTimeoutError(
+                timeoutMs,
+              ),
+            );
+          }, timeoutMs);
+
+        /*
+         * No `void asyncFunction()`.
+         * runAttempt() itself cannot produce
+         * an unhandled rejection.
+         */
+        runAttempt(
+          flow,
+          1,
+        );
+      },
+    );
+  }
+
+  function onPayload(
+    payload: Buffer | BinaryNode,
+  ): void {
+    if (!active) {
+      return;
+    }
+
+    const flow = active;
+
+    if (flow.settled) {
+      return;
+    }
+
+    let node: BinaryNode;
+
+    try {
+      node =
+        Buffer.isBuffer(payload)
+          ? decodeBinaryNode(payload)
+          : payload;
+    } catch {
+      return;
+    }
+
+    if (node.tag !== "iq") {
+      return;
+    }
+
+    const iqId =
+      getBinaryNodeAttr(
+        node,
+        "id",
+      );
+
+    /*
+     * Ignore stale / unrelated IQ.
+     */
+    if (
+      !iqId ||
+      iqId !== flow.activeIqId
+    ) {
+      return;
+    }
+
+    const type =
+      getBinaryNodeAttr(
+        node,
+        "type",
+      );
+
+    if (type === "error") {
+      const errorNode =
+        getBinaryNodeChild(
+          node,
+          "error",
+        );
 
       const code =
-        await p;
+        errorNode
+          ? getBinaryNodeAttr(
+              errorNode,
+              "code",
+            )
+          : undefined;
 
-      expect(
-        normalizePairingCode(
-          code.replace(/-/g, ""),
-        ),
-      ).toBe(
-        "ABCD-1234",
-      );
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-    },
-  );
-
-
-  it(
-    "TEST 2: rejects when credentials are already registered",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      const creds = {
-        registered: true,
-      } as AuthenticationCreds;
-
-      await expect(
-        ctrl.requestCode(
-          "6281234567890",
-          {
-            session: fakeSession(),
-            send: () => {},
-            creds,
-          },
-        ),
-      ).rejects.toThrow(
-        /already registered/i,
-      );
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-    },
-  );
-
-
-  it(
-    "TEST 3: second concurrent request is rejected",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      const sent: Buffer[] = [];
-
-      const p1 =
-        ctrl.requestCode(
-          "6281111111111",
-          {
-            session: fakeSession(),
-
-            send: (buffer) => {
-              sent.push(buffer);
-            },
-
-            timeoutMs: 60_000,
-            maxAttempts: 1,
-          },
-        );
-
-      let p1Error: unknown;
-
-      const handled = p1.catch((error) => {
-        p1Error = error;
-      });
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(true);
-
-      await expect(
-        ctrl.requestCode(
-          "6282222222222",
-          {
-            session: fakeSession(),
-
-            send: () => {},
-
-            timeoutMs: 60_000,
-            maxAttempts: 1,
-          },
-        ),
-      ).rejects.toThrow(
-        /PAIRING_ALREADY_IN_PROGRESS/i,
-      );
-
-      ctrl.cancelAll(
-        "test cleanup",
-      );
-
-      await handled;
-
-      expect(
-        p1Error,
-      ).toBeInstanceOf(Error);
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-    },
-  );
-
-
-  it(
-    "TEST 4: response for old attempt IQ does not resolve new attempt",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      const sent: Buffer[] = [];
-
-      const p =
-        ctrl.requestCode(
-          "6281234567890",
-          {
-            session: fakeSession(),
-
-            send: (buffer) => {
-              sent.push(buffer);
-            },
-
-            timeoutMs: 60_000,
-            maxAttempts: 3,
-          },
-        );
-
-      let resultValue: string | undefined;
-      let resultError: unknown;
-
-      const handled =
-        p.then(
-          (value) => {
-            resultValue = value;
-          },
-          (error) => {
-            resultError = error;
-          },
-        );
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(
-        sent.length,
-      ).toBe(1);
-
-      const {
-        decodeBinaryNode,
-      } = await import(
-        "../src/WABinary/decode.js"
-      );
-
-      const {
-        getBinaryNodeAttr,
-      } = await import(
-        "../src/WABinary/index.js"
-      );
-
-      const firstId =
-        getBinaryNodeAttr(
-          decodeBinaryNode(
-            sent[0]!,
-          ),
-          "id",
-        )!;
-
-      await vi.advanceTimersByTimeAsync(
-        5_000,
-      );
-
-      expect(
-        sent.length,
-      ).toBeGreaterThanOrEqual(2);
-
-      const secondId =
-        getBinaryNodeAttr(
-          decodeBinaryNode(
-            sent[1]!,
-          ),
-          "id",
-        )!;
-
-      expect(
-        secondId,
-      ).not.toBe(
-        firstId,
-      );
-
-      ctrl.onPayload(
-        makeCodeResultNode(
-          firstId,
-          "OLDCODE1",
+      settleReject(
+        flow,
+        new Error(
+          `PAIRING FAILED: WhatsApp returned error${
+            code
+              ? ` ${code}`
+              : ""
+          }`,
         ),
       );
 
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(1);
+      return;
+    }
 
-      ctrl.onPayload(
-        makeCodeResultNode(
-          secondId,
-          "NEWCODE2",
-        ),
-      );
+    if (
+      type !== "result"
+    ) {
+      return;
+    }
 
-      await handled;
+    const code =
+      extractPairingCode(node);
 
-      expect(
-        resultError,
-      ).toBeUndefined();
+    if (!code) {
+      return;
+    }
 
-      expect(
-        resultValue,
-      ).toBeDefined();
-
-      expect(
-        resultValue?.replace(/-/g, ""),
-      ).toBe(
-        "NEWCODE2",
-      );
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-    },
-  );
-
-
-  it(
-    "TEST 5: response with wrong IQ id is ignored",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      const sent: Buffer[] = [];
-
-      let caughtError: unknown;
-
-      const p =
-        ctrl.requestCode(
-          "6281234567890",
-          {
-            session: fakeSession(),
-
-            send: (buffer) => {
-              sent.push(buffer);
-            },
-
-            timeoutMs: 5_000,
-            maxAttempts: 1,
-          },
-        );
-
-      /*
-       * Keep the rejection handler attached to
-       * the original Promise and explicitly await
-       * the handled chain.
-       */
-      const handled =
-        p.catch((error) => {
-          caughtError = error;
-        });
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(
-        sent.length,
-      ).toBe(1);
-
-      ctrl.onPayload(
-        makeCodeResultNode(
-          "WRONG_ID_XXXX",
-          "ABCD1234",
-        ),
-      );
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(1);
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(true);
-
-      await vi.advanceTimersByTimeAsync(
-        5_000,
-      );
-
-      await handled;
-
-      expect(
-        caughtError,
-      ).toBeInstanceOf(Error);
-
-      expect(
-        (caughtError as Error).message,
-      ).toMatch(
-        /timed out|PAIRING FAILED/i,
-      );
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-    },
-  );
-
-
-  it(
-    "TEST 6: response after timeout is ignored (no throw)",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      const sent: Buffer[] = [];
-
-      let caughtError: unknown;
-
-      const p =
-        ctrl.requestCode(
-          "6281234567890",
-          {
-            session: fakeSession(),
-
-            send: (buffer) => {
-              sent.push(buffer);
-            },
-
-            timeoutMs: 3_000,
-            maxAttempts: 1,
-          },
-        );
-
-      /*
-       * Attach rejection handler immediately.
-       */
-      const handled =
-        p.catch((error) => {
-          caughtError = error;
-        });
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(
-        sent.length,
-      ).toBe(1);
-
-      const {
-        decodeBinaryNode,
-      } = await import(
-        "../src/WABinary/decode.js"
-      );
-
-      const {
-        getBinaryNodeAttr,
-      } = await import(
-        "../src/WABinary/index.js"
-      );
-
-      const iqId =
-        getBinaryNodeAttr(
-          decodeBinaryNode(
-            sent[0]!,
-          ),
-          "id",
-        )!;
-
-      expect(
-it(
-  "TEST 5: response with wrong IQ id is ignored",
-  async () => {
-    const ctrl = createPairingController();
-
-    const sent: Buffer[] = [];
-
-    const p = ctrl.requestCode(
-      "6281234567890",
-      {
-        session: fakeSession(),
-
-        send: (buffer) => {
-          sent.push(buffer);
-        },
-
-        timeoutMs: 5_000,
-        maxAttempts: 1,
-      },
+    settleResolve(
+      flow,
+      code,
     );
+  }
 
-    // IMPORTANT:
-    // Register Vitest's rejection handler BEFORE
-    // advancing the fake timer.
-    const rejection = expect(p).rejects.toThrow(
-      /timed out|PAIRING FAILED/i,
-    );
+  function cancelAll(
+    reason = "cancelled",
+  ): void {
+    if (!active) {
+      return;
+    }
 
-    await vi.advanceTimersByTimeAsync(0);
+    const flow =
+      active;
 
-    expect(sent.length).toBe(1);
-
-    ctrl.onPayload(
-      makeCodeResultNode(
-        "WRONG_ID_XXXX",
-        "ABCD1234",
+    settleReject(
+      flow,
+      createCancelledError(
+        reason,
       ),
     );
+  }
 
-    expect(ctrl.pendingCount()).toBe(1);
-    expect(ctrl.isBusy()).toBe(true);
-
-    await vi.advanceTimersByTimeAsync(5_000);
-
-    // Wait until Vitest consumes the rejection.
-    await rejection;
-
-    expect(ctrl.pendingCount()).toBe(0);
-    expect(ctrl.isBusy()).toBe(false);
-  },
-);
-
-
-it(
-  "TEST 6: response after timeout is ignored (no throw)",
-  async () => {
-    const ctrl = createPairingController();
-
-    const sent: Buffer[] = [];
-
-    const p = ctrl.requestCode(
-      "6281234567890",
-      {
-        session: fakeSession(),
-
-        send: (buffer) => {
-          sent.push(buffer);
-        },
-
-        timeoutMs: 3_000,
-        maxAttempts: 1,
-      },
+  function isBusy(): boolean {
+    return (
+      active !== undefined &&
+      !active.settled
     );
-
-    // Register rejection assertion immediately.
-    const rejection = expect(p).rejects.toThrow(
-      /timed out|PAIRING FAILED/i,
-    );
-
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(sent.length).toBe(1);
-
-    const {
-      decodeBinaryNode,
-    } = await import(
-      "../src/WABinary/decode.js"
-    );
-
-    const {
-      getBinaryNodeAttr,
-    } = await import(
-      "../src/WABinary/index.js"
-    );
-
-    const iqId = getBinaryNodeAttr(
-      decodeBinaryNode(sent[0]!),
-      "id",
-    )!;
-
-    expect(iqId).toBeTruthy();
-
-    await vi.advanceTimersByTimeAsync(3_000);
-
-    // Consume expected timeout rejection.
-    await rejection;
-
-    // Late response must be ignored.
-    expect(() => {
-      ctrl.onPayload(
-        makeCodeResultNode(
-          iqId,
-          "LATECODE",
-        ),
-      );
-    }).not.toThrow();
-
-    expect(ctrl.isBusy()).toBe(false);
-    expect(ctrl.pendingCount()).toBe(0);
-  },
-);
-
-
-  it(
-    "TEST 7: pairing code is normalized",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      const sent: Buffer[] = [];
-
-      const p =
-        ctrl.requestCode(
-          "6281234567890",
-          {
-            session: fakeSession(),
-
-            send: (buffer) => {
-              sent.push(buffer);
-            },
-
-            timeoutMs: 30_000,
-            maxAttempts: 1,
-          },
-        );
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      const {
-        decodeBinaryNode,
-      } = await import(
-        "../src/WABinary/decode.js"
-      );
-
-      const {
-        getBinaryNodeAttr,
-      } = await import(
-        "../src/WABinary/index.js"
-      );
-
-      const iqId =
-        getBinaryNodeAttr(
-          decodeBinaryNode(
-            sent[0]!,
-          ),
-          "id",
-        )!;
-
-      ctrl.onPayload(
-        makeCodeResultNode(
-          iqId,
-          "WXYZ9876",
-        ),
-      );
-
-      const code =
-        await p;
-
-      expect(
-        code,
-      ).toBe(
-        "WXYZ-9876",
-      );
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-    },
-  );
-
-
-  it(
-    "TEST 8: registered credentials reject pairing",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      const creds = {
-        registered: true,
-
-        me: {
-          id: "6281234567890@s.whatsapp.net",
-        },
-      } as AuthenticationCreds;
-
-      await expect(
-        ctrl.requestCode(
-          "6281234567890",
-          {
-            session: fakeSession(),
-
-            send: () => {
-              throw new Error(
-                "send() must not be called",
-              );
-            },
-
-            creds,
-          },
-        ),
-      ).rejects.toThrow(
-        /already registered/i,
-      );
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-    },
-  );
-
-
-  it(
-    "TEST 9: new flow can start after cancellation",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      const sent: Buffer[] = [];
-
-      const p1 =
-        ctrl.requestCode(
-          "6281111111111",
-          {
-            session: fakeSession(),
-
-            send: (buffer) => {
-              sent.push(buffer);
-            },
-
-            timeoutMs: 60_000,
-            maxAttempts: 1,
-          },
-        );
-
-      let p1Error: unknown;
-
-      const handledP1 =
-        p1.catch((error) => {
-          p1Error = error;
-        });
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(true);
-
-      ctrl.cancelAll(
-        "disconnect",
-      );
-
-      await handledP1;
-
-      expect(
-        p1Error,
-      ).toBeInstanceOf(Error);
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-
-      const p2 =
-        ctrl.requestCode(
-          "6282222222222",
-          {
-            session: fakeSession(),
-
-            send: (buffer) => {
-              sent.push(buffer);
-            },
-
-            timeoutMs: 30_000,
-            maxAttempts: 1,
-          },
-        );
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(true);
-
-      const {
-        decodeBinaryNode,
-      } = await import(
-        "../src/WABinary/decode.js"
-      );
-
-      const {
-        getBinaryNodeAttr,
-      } = await import(
-        "../src/WABinary/index.js"
-      );
-
-      const iqId =
-        getBinaryNodeAttr(
-          decodeBinaryNode(
-            sent[sent.length - 1]!,
-          ),
-          "id",
-        )!;
-
-      ctrl.onPayload(
-        makeCodeResultNode(
-          iqId,
-          "AAAA1111",
-        ),
-      );
-
-      await expect(
-        p2,
-      ).resolves.toBe(
-        "AAAA-1111",
-      );
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-    },
-  );
-
-
-  it(
-    "TEST 10: cancelAll clears active flow",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      const p =
-        ctrl.requestCode(
-          "6281234567890",
-          {
-            session: fakeSession(),
-
-            send: () => {},
-
-            timeoutMs: 60_000,
-            maxAttempts: 1,
-          },
-        );
-
-      let caughtError: unknown;
-
-      const handled =
-        p.catch((error) => {
-          caughtError = error;
-        });
-
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(true);
-
-      ctrl.cancelAll(
-        "logged out",
-      );
-
-      await handled;
-
-      expect(
-        caughtError,
-      ).toBeInstanceOf(Error);
-
-      expect(
-        (caughtError as Error).message,
-      ).toMatch(
-        /logged out|cancel/i,
-      );
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-    },
-  );
-
-
-  it(
-    "TEST 11: invalid phone number is rejected without locking",
-    async () => {
-      const ctrl =
-        createPairingController();
-
-      await expect(
-        ctrl.requestCode(
-          "12",
-          {
-            session: fakeSession(),
-            send: () => {},
-          },
-        ),
-      ).rejects.toThrow(
-        /invalid|phone|number/i,
-      );
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-    },
-  );
-});
+  }
+
+  function pendingCount(): number {
+    return isBusy()
+      ? 1
+      : 0;
+  }
+
+  return {
+    requestCode,
+    onPayload,
+    cancelAll,
+    isBusy,
+    pendingCount,
+  };
+}
