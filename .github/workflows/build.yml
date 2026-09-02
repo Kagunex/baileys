@@ -14,7 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract ZIP
+      - name: Extract ZIP to root
         run: |
           set -e
 
@@ -25,11 +25,24 @@ jobs:
             exit 1
           fi
 
-          echo "Extracting: $ZIP_FILE"
+          mkdir -p /tmp/extract
 
-          unzip -o "$ZIP_FILE" -d .
+          echo "Extracting $ZIP_FILE..."
+          unzip -o "$ZIP_FILE" -d /tmp/extract
 
           rm -f "$ZIP_FILE"
+
+          # Jika ZIP hanya memiliki 1 folder utama,
+          # ambil ISINYA langsung ke root repository.
+          ITEMS=(/tmp/extract/*)
+
+          if [ "${#ITEMS[@]}" -eq 1 ] && [ -d "${ITEMS[0]}" ]; then
+            cp -a "${ITEMS[0]}"/. .
+          else
+            cp -a /tmp/extract/. .
+          fi
+
+          rm -rf /tmp/extract
 
       - name: Commit and Push
         run: |
@@ -43,5 +56,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Extract ZIP and remove archive"
+          git commit -m "Extract ZIP to repository root"
           git push
