@@ -189,8 +189,15 @@ describe("pairing-controller", () => {
 const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/);
 
 // Timeout
+const rejection = p.catch((err) => {
+  expect(err).toThrow?.(/timed out|PAIRING FAILED/);
+  expect(String(err.message)).toMatch(/timed out|PAIRING FAILED/);
+});
+
 await vi.advanceTimersByTimeAsync(5_100);
 await rejection;
+
+expect(ctrl.pendingCount()).toBe(0);
 
   it("TEST 6: response after timeout is ignored (no throw)", async () => {
     const ctrl = createPairingController();
@@ -207,6 +214,10 @@ await rejection;
     const iqId = getBinaryNodeAttr(decodeBinaryNode(sent[0]!), "id")!;
 
     const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/);
+
+const rejection = p.catch((err) => {
+  expect(String(err.message)).toMatch(/timed out|PAIRING FAILED/);
+});
 
 await vi.advanceTimersByTimeAsync(3_100);
 await rejection;
