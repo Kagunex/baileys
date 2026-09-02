@@ -109,7 +109,9 @@ describe("pairing-controller", () => {
 
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(sent.length).toBe(1);
+      expect(
+        sent.length,
+      ).toBe(1);
 
       const {
         decodeBinaryNode,
@@ -134,7 +136,9 @@ describe("pairing-controller", () => {
           "id",
         );
 
-      expect(iqId).toBeTruthy();
+      expect(
+        iqId,
+      ).toBeTruthy();
 
       ctrl.onPayload(
         makeCodeResultNode(
@@ -222,12 +226,9 @@ describe("pairing-controller", () => {
           },
         );
 
-      /*
-       * Attach handler immediately.
-       */
       let p1Error: unknown;
 
-      void p1.catch((error) => {
+      const handled = p1.catch((error) => {
         p1Error = error;
       });
 
@@ -242,7 +243,9 @@ describe("pairing-controller", () => {
           "6282222222222",
           {
             session: fakeSession(),
+
             send: () => {},
+
             timeoutMs: 60_000,
             maxAttempts: 1,
           },
@@ -255,8 +258,7 @@ describe("pairing-controller", () => {
         "test cleanup",
       );
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await handled;
 
       expect(
         p1Error,
@@ -296,23 +298,18 @@ describe("pairing-controller", () => {
           },
         );
 
-      /*
-       * Handle rejection immediately.
-       * The test expects success, but this prevents
-       * Vitest from seeing an unhandled rejection
-       * if something goes wrong.
-       */
       let resultValue: string | undefined;
       let resultError: unknown;
 
-      void p.then(
-        (value) => {
-          resultValue = value;
-        },
-        (error) => {
-          resultError = error;
-        },
-      );
+      const handled =
+        p.then(
+          (value) => {
+            resultValue = value;
+          },
+          (error) => {
+            resultError = error;
+          },
+        );
 
       await vi.advanceTimersByTimeAsync(0);
 
@@ -340,9 +337,6 @@ describe("pairing-controller", () => {
           "id",
         )!;
 
-      /*
-       * Start second attempt.
-       */
       await vi.advanceTimersByTimeAsync(
         5_000,
       );
@@ -361,11 +355,10 @@ describe("pairing-controller", () => {
 
       expect(
         secondId,
-      ).not.toBe(firstId);
+      ).not.toBe(
+        firstId,
+      );
 
-      /*
-       * Old IQ response.
-       */
       ctrl.onPayload(
         makeCodeResultNode(
           firstId,
@@ -377,9 +370,6 @@ describe("pairing-controller", () => {
         ctrl.pendingCount(),
       ).toBe(1);
 
-      /*
-       * Current IQ response.
-       */
       ctrl.onPayload(
         makeCodeResultNode(
           secondId,
@@ -387,8 +377,7 @@ describe("pairing-controller", () => {
         ),
       );
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await handled;
 
       expect(
         resultError,
@@ -415,12 +404,6 @@ describe("pairing-controller", () => {
   );
 
 
-  /*
-   * IMPORTANT:
-   *
-   * TEST 5 catches the rejection directly on the
-   * original Promise BEFORE timeout is advanced.
-   */
   it(
     "TEST 5: response with wrong IQ id is ignored",
     async () => {
@@ -447,12 +430,14 @@ describe("pairing-controller", () => {
         );
 
       /*
-       * VERY IMPORTANT:
-       * Attach catch immediately.
+       * Keep the rejection handler attached to
+       * the original Promise and explicitly await
+       * the handled chain.
        */
-      void p.catch((error) => {
-        caughtError = error;
-      });
+      const handled =
+        p.catch((error) => {
+          caughtError = error;
+        });
 
       await vi.advanceTimersByTimeAsync(0);
 
@@ -460,9 +445,6 @@ describe("pairing-controller", () => {
         sent.length,
       ).toBe(1);
 
-      /*
-       * Wrong IQ ID.
-       */
       ctrl.onPayload(
         makeCodeResultNode(
           "WRONG_ID_XXXX",
@@ -478,19 +460,11 @@ describe("pairing-controller", () => {
         ctrl.isBusy(),
       ).toBe(true);
 
-      /*
-       * Trigger timeout.
-       */
       await vi.advanceTimersByTimeAsync(
         5_000,
       );
 
-      /*
-       * Flush Promise microtasks.
-       */
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      await handled;
 
       expect(
         caughtError,
@@ -513,11 +487,6 @@ describe("pairing-controller", () => {
   );
 
 
-  /*
-   * TEST 6
-   *
-   * Timeout first, then late IQ response.
-   */
   it(
     "TEST 6: response after timeout is ignored (no throw)",
     async () => {
@@ -546,9 +515,10 @@ describe("pairing-controller", () => {
       /*
        * Attach rejection handler immediately.
        */
-      void p.catch((error) => {
-        caughtError = error;
-      });
+      const handled =
+        p.catch((error) => {
+          caughtError = error;
+        });
 
       await vi.advanceTimersByTimeAsync(0);
 
@@ -580,19 +550,11 @@ describe("pairing-controller", () => {
         iqId,
       ).toBeTruthy();
 
-      /*
-       * Trigger timeout.
-       */
       await vi.advanceTimersByTimeAsync(
         3_000,
       );
 
-      /*
-       * Flush Promise microtasks.
-       */
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      await handled;
 
       expect(
         caughtError,
@@ -604,9 +566,6 @@ describe("pairing-controller", () => {
         /timed out|PAIRING FAILED/i,
       );
 
-      /*
-       * Late IQ response must be ignored.
-       */
       expect(() => {
         ctrl.onPayload(
           makeCodeResultNode(
@@ -768,9 +727,10 @@ describe("pairing-controller", () => {
 
       let p1Error: unknown;
 
-      void p1.catch((error) => {
-        p1Error = error;
-      });
+      const handledP1 =
+        p1.catch((error) => {
+          p1Error = error;
+        });
 
       await vi.advanceTimersByTimeAsync(0);
 
@@ -782,8 +742,7 @@ describe("pairing-controller", () => {
         "disconnect",
       );
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await handledP1;
 
       expect(
         p1Error,
@@ -797,9 +756,6 @@ describe("pairing-controller", () => {
         ctrl.pendingCount(),
       ).toBe(0);
 
-      /*
-       * New flow.
-       */
       const p2 =
         ctrl.requestCode(
           "6282222222222",
@@ -886,9 +842,10 @@ describe("pairing-controller", () => {
 
       let caughtError: unknown;
 
-      void p.catch((error) => {
-        caughtError = error;
-      });
+      const handled =
+        p.catch((error) => {
+          caughtError = error;
+        });
 
       await vi.advanceTimersByTimeAsync(0);
 
@@ -900,8 +857,7 @@ describe("pairing-controller", () => {
         "logged out",
       );
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await handled;
 
       expect(
         caughtError,
