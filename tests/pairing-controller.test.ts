@@ -445,14 +445,20 @@ describe(
       const ctrl = createPairingController();
       const sent: Buffer[] = [];
 
+      let rejectionError: Error | undefined;
+
+      // Pasang handler catch SEGERA setelah promise dibuat
       const p = ctrl.requestCode("6281234567890", {
         session: fakeSession(),
         send: (b) => sent.push(b),
         timeoutMs: 5_000,
         maxAttempts: 1,
+      }).catch((err) => {
+        rejectionError = err;
       });
 
       await vi.advanceTimersByTimeAsync(0);
+
       expect(sent.length).toBe(1);
 
       // IQ ID salah → harus diabaikan
@@ -468,17 +474,13 @@ describe(
 
       // Trigger timeout
       await vi.advanceTimersByTimeAsync(5_000);
+      // Tunggu microtask agar handler catch dieksekusi
+      await Promise.resolve();
 
-      try {
-        await p;
-        // Jika tidak reject, test gagal
-        expect.unreachable("Expected request to reject on timeout");
-      } catch (error) {
-        expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toMatch(
-          /timed out|PAIRING FAILED/i,
-        );
-      }
+      expect(rejectionError).toBeInstanceOf(Error);
+      expect(rejectionError!.message).toMatch(
+        /timed out|PAIRING FAILED/i,
+      );
 
       expect(ctrl.pendingCount()).toBe(0);
       expect(ctrl.isBusy()).toBe(false);
@@ -489,14 +491,19 @@ describe(
       const ctrl = createPairingController();
       const sent: Buffer[] = [];
 
+      let rejectionError: Error | undefined;
+
       const p = ctrl.requestCode("6281234567890", {
         session: fakeSession(),
         send: (b) => sent.push(b),
         timeoutMs: 3_000,
         maxAttempts: 1,
+      }).catch((err) => {
+        rejectionError = err;
       });
 
       await vi.advanceTimersByTimeAsync(0);
+
       expect(sent.length).toBe(1);
 
       const { decodeBinaryNode } =
@@ -514,16 +521,13 @@ describe(
 
       // Trigger timeout
       await vi.advanceTimersByTimeAsync(3_000);
+      // Tunggu microtask
+      await Promise.resolve();
 
-      try {
-        await p;
-        expect.unreachable("Expected request to reject on timeout");
-      } catch (error) {
-        expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toMatch(
-          /timed out|PAIRING FAILED/i,
-        );
-      }
+      expect(rejectionError).toBeInstanceOf(Error);
+      expect(rejectionError!.message).toMatch(
+        /timed out|PAIRING FAILED/i,
+      );
 
       // Response datang SETELAH timeout
       expect(() => {
