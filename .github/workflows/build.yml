@@ -1,60 +1,39 @@
-name: Extract ZIP
+name: Build & Test
 
 on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  extract:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract ZIP to root
-        run: |
-          set -e
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+      - name: Install dependencies
+        run: npm ci
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ZIP file tidak ditemukan."
-            exit 1
-          fi
+      - name: Build
+        run: npm run build
 
-          mkdir -p /tmp/extract
+      - name: Test
+        run: npm test
 
-          echo "Extracting $ZIP_FILE..."
-          unzip -o "$ZIP_FILE" -d /tmp/extract
+      - name: Verify
+        run: npm run verify
 
-          rm -f "$ZIP_FILE"
-
-          # Jika ZIP hanya memiliki 1 folder utama,
-          # ambil ISINYA langsung ke root repository.
-          ITEMS=(/tmp/extract/*)
-
-          if [ "${#ITEMS[@]}" -eq 1 ] && [ -d "${ITEMS[0]}" ]; then
-            cp -a "${ITEMS[0]}"/. .
-          else
-            cp -a /tmp/extract/. .
-          fi
-
-          rm -rf /tmp/extract
-
-      - name: Commit and Push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A
-
-          if git diff --cached --quiet; then
-            echo "Tidak ada perubahan."
-            exit 0
-          fi
-
-          git commit -m "Extract ZIP to repository root"
-          git push
+      - name: Pack
+        run: npm pack --dry-run
