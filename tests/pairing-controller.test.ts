@@ -441,85 +441,53 @@ describe(
     );
 
 
-    it(
-      "TEST 5: wrong IQ id is ignored and request eventually times out",
-      async () => {
-        const ctrl =
-          createPairingController();
+    it("TEST 5: response with wrong IQ id is ignored", async () => {
+  const ctrl = createPairingController();
+  const sent: Buffer[] = [];
 
-        const sent: Buffer[] = [];
+  const p = ctrl.requestCode("6281234567890", {
+    session: fakeSession(),
+    send: (b) => sent.push(b),
+    timeoutMs: 5_000,
+    maxAttempts: 1,
+  });
 
-        const p =
-          ctrl.requestCode(
-            "6281234567890",
-            {
-              session: fakeSession(),
+  // Tangani rejection LANGSUNG
+  let error: unknown;
 
-              send: (b) => {
-                sent.push(b);
-              },
+  const handled = p.catch((err) => {
+    error = err;
+  });
 
-              timeoutMs: 5_000,
-              maxAttempts: 1,
-            },
-          );
+  await vi.advanceTimersByTimeAsync(0);
 
-        /*
-         * CRITICAL:
-         * Attach rejection handler BEFORE timeout.
-         */
-        const rejection =
-          expect(
-            p,
-          ).rejects.toThrow(
-            /timed out|PAIRING FAILED/i,
-          );
+  expect(sent.length).toBe(1);
 
-        await vi.advanceTimersByTimeAsync(0);
+  // IQ ID salah → harus diabaikan
+  ctrl.onPayload(
+    makeCodeResultNode(
+      "WRONG_ID_XXXX",
+      "ABCD1234",
+    ),
+  );
 
-        expect(
-          sent.length,
-        ).toBe(1);
+  expect(ctrl.pendingCount()).toBe(1);
+  expect(ctrl.isBusy()).toBe(true);
 
-        /*
-         * Wrong IQ must be ignored.
-         */
-        ctrl.onPayload(
-          makeCodeResultNode(
-            "WRONG_ID_XXXX",
-            "ABCD1234",
-          ),
-        );
+  // Trigger timeout
+  await vi.advanceTimersByTimeAsync(5_000);
 
-        expect(
-          ctrl.pendingCount(),
-        ).toBe(1);
+  // Tunggu Promise rejection selesai ditangani
+  await handled;
 
-        expect(
-          ctrl.isBusy(),
-        ).toBe(true);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toMatch(
+    /timed out|PAIRING FAILED/i,
+  );
 
-        /*
-         * Trigger overall timeout.
-         */
-        await vi.advanceTimersByTimeAsync(
-          5_000,
-        );
-
-        /*
-         * Consume expected rejection.
-         */
-        await rejection;
-
-        expect(
-          ctrl.pendingCount(),
-        ).toBe(0);
-
-        expect(
-          ctrl.isBusy(),
-        ).toBe(false);
-      },
-    );
+  expect(ctrl.pendingCount()).toBe(0);
+  expect(ctrl.isBusy()).toBe(false);
+});
 
 
     it("TEST 6: response after timeout is ignored (no throw)", async () => {
@@ -533,10 +501,12 @@ describe(
     maxAttempts: 1,
   });
 
-  // WAJIB dipasang sebelum timer dimajukan
-  const rejection = expect(p).rejects.toThrow(
-    /timed out|PAIRING FAILED/i,
-  );
+  // Tangani rejection LANGSUNG
+  let error: unknown;
+
+  const handled = p.catch((err) => {
+    error = err;
+  });
 
   await vi.advanceTimersByTimeAsync(0);
 
@@ -555,13 +525,18 @@ describe(
 
   expect(iqId).toBeTruthy();
 
-  // Timeout
+  // Trigger timeout
   await vi.advanceTimersByTimeAsync(3_000);
 
-  // Tunggu rejection yang sudah ditangani
-  await rejection;
+  // Pastikan rejection sudah ditangani
+  await handled;
 
-  // Response yang datang setelah timeout harus diabaikan
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toMatch(
+    /timed out|PAIRING FAILED/i,
+  );
+
+  // Response datang SETELAH timeout
   expect(() => {
     ctrl.onPayload(
       makeCodeResultNode(
@@ -571,8 +546,8 @@ describe(
     );
   }).not.toThrow();
 
-  expect(ctrl.isBusy()).toBe(false);
   expect(ctrl.pendingCount()).toBe(0);
+  expect(ctrl.isBusy()).toBe(false);
 });
     it(
       "TEST 7: local phone number is normalized",
