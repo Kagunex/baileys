@@ -445,15 +445,16 @@ describe(
       const ctrl = createPairingController();
       const sent: Buffer[] = [];
 
+      let rejectionError: Error | undefined;
+
       const p = ctrl.requestCode("6281234567890", {
         session: fakeSession(),
         send: (b) => sent.push(b),
         timeoutMs: 5_000,
         maxAttempts: 1,
+      }).catch((err) => {
+        rejectionError = err;
       });
-
-      // Pasang assertion rejects SEBELUM memicu timeout
-      const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/i);
 
       await vi.advanceTimersByTimeAsync(0);
 
@@ -472,9 +473,13 @@ describe(
 
       // Trigger timeout
       await vi.advanceTimersByTimeAsync(5_000);
+      // Tunggu microtask
+      await Promise.resolve();
 
-      // Tunggu rejection tertangani
-      await rejection;
+      expect(rejectionError).toBeInstanceOf(Error);
+      expect(rejectionError!.message).toMatch(
+        /timed out|PAIRING FAILED/i,
+      );
 
       expect(ctrl.pendingCount()).toBe(0);
       expect(ctrl.isBusy()).toBe(false);
@@ -485,15 +490,16 @@ describe(
       const ctrl = createPairingController();
       const sent: Buffer[] = [];
 
+      let rejectionError: Error | undefined;
+
       const p = ctrl.requestCode("6281234567890", {
         session: fakeSession(),
         send: (b) => sent.push(b),
         timeoutMs: 3_000,
         maxAttempts: 1,
+      }).catch((err) => {
+        rejectionError = err;
       });
-
-      // Pasang assertion rejects SEBELUM memicu timeout
-      const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/i);
 
       await vi.advanceTimersByTimeAsync(0);
 
@@ -514,9 +520,13 @@ describe(
 
       // Trigger timeout
       await vi.advanceTimersByTimeAsync(3_000);
+      // Tunggu microtask
+      await Promise.resolve();
 
-      // Tunggu rejection tertangani
-      await rejection;
+      expect(rejectionError).toBeInstanceOf(Error);
+      expect(rejectionError!.message).toMatch(
+        /timed out|PAIRING FAILED/i,
+      );
 
       // Response datang SETELAH timeout
       expect(() => {
