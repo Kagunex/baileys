@@ -448,7 +448,7 @@ describe(
       let rejectionError: Error | undefined;
 
       // Pasang handler catch SEGERA setelah promise dibuat
-      const p = ctrl.requestCode("6281234567890", {
+      const handled = ctrl.requestCode("6281234567890", {
         session: fakeSession(),
         send: (b) => sent.push(b),
         timeoutMs: 5_000,
@@ -474,8 +474,8 @@ describe(
 
       // Trigger timeout
       await vi.advanceTimersByTimeAsync(5_000);
-      // Tunggu microtask agar handler catch dieksekusi
-      await Promise.resolve();
+      // Tunggu handler catch selesai dieksekusi
+      await handled;
 
       expect(rejectionError).toBeInstanceOf(Error);
       expect(rejectionError!.message).toMatch(
@@ -493,7 +493,7 @@ describe(
 
       let rejectionError: Error | undefined;
 
-      const p = ctrl.requestCode("6281234567890", {
+      const handled = ctrl.requestCode("6281234567890", {
         session: fakeSession(),
         send: (b) => sent.push(b),
         timeoutMs: 3_000,
@@ -521,8 +521,8 @@ describe(
 
       // Trigger timeout
       await vi.advanceTimersByTimeAsync(3_000);
-      // Tunggu microtask
-      await Promise.resolve();
+      // Tunggu handler catch selesai dieksekusi
+      await handled;
 
       expect(rejectionError).toBeInstanceOf(Error);
       expect(rejectionError!.message).toMatch(
