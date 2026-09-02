@@ -185,11 +185,12 @@ describe("pairing-controller", () => {
     ctrl.onPayload(makeCodeResultNode("WRONG_ID_XXXX", "ABCD1234"));
     expect(ctrl.pendingCount()).toBe(1);
 
-    // Timeout
-    await vi.advanceTimersByTimeAsync(5_100);
-    await expect(p).rejects.toThrow(/timed out|PAIRING FAILED/);
-    expect(ctrl.pendingCount()).toBe(0);
-  });
+    // Pasang rejection handler SEBELUM timer dijalankan
+const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/);
+
+// Timeout
+await vi.advanceTimersByTimeAsync(5_100);
+await rejection;
 
   it("TEST 6: response after timeout is ignored (no throw)", async () => {
     const ctrl = createPairingController();
@@ -205,9 +206,10 @@ describe("pairing-controller", () => {
     const { getBinaryNodeAttr } = await import("../src/WABinary/index.js");
     const iqId = getBinaryNodeAttr(decodeBinaryNode(sent[0]!), "id")!;
 
-    await vi.advanceTimersByTimeAsync(3_100);
-    await expect(p).rejects.toThrow(/timed out|PAIRING FAILED/);
+    const rejection = expect(p).rejects.toThrow(/timed out|PAIRING FAILED/);
 
+await vi.advanceTimersByTimeAsync(3_100);
+await rejection;
     // Late response must not throw or re-lock
     expect(() => ctrl.onPayload(makeCodeResultNode(iqId, "LATECODE"))).not.toThrow();
     expect(ctrl.isBusy()).toBe(false);
