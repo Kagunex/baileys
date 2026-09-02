@@ -547,43 +547,127 @@ describe("pairing-controller", () => {
         )!;
 
       expect(
-        iqId,
-      ).toBeTruthy();
+it(
+  "TEST 5: response with wrong IQ id is ignored",
+  async () => {
+    const ctrl = createPairingController();
 
-      await vi.advanceTimersByTimeAsync(
-        3_000,
+    const sent: Buffer[] = [];
+
+    const p = ctrl.requestCode(
+      "6281234567890",
+      {
+        session: fakeSession(),
+
+        send: (buffer) => {
+          sent.push(buffer);
+        },
+
+        timeoutMs: 5_000,
+        maxAttempts: 1,
+      },
+    );
+
+    // IMPORTANT:
+    // Register Vitest's rejection handler BEFORE
+    // advancing the fake timer.
+    const rejection = expect(p).rejects.toThrow(
+      /timed out|PAIRING FAILED/i,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sent.length).toBe(1);
+
+    ctrl.onPayload(
+      makeCodeResultNode(
+        "WRONG_ID_XXXX",
+        "ABCD1234",
+      ),
+    );
+
+    expect(ctrl.pendingCount()).toBe(1);
+    expect(ctrl.isBusy()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    // Wait until Vitest consumes the rejection.
+    await rejection;
+
+    expect(ctrl.pendingCount()).toBe(0);
+    expect(ctrl.isBusy()).toBe(false);
+  },
+);
+
+
+it(
+  "TEST 6: response after timeout is ignored (no throw)",
+  async () => {
+    const ctrl = createPairingController();
+
+    const sent: Buffer[] = [];
+
+    const p = ctrl.requestCode(
+      "6281234567890",
+      {
+        session: fakeSession(),
+
+        send: (buffer) => {
+          sent.push(buffer);
+        },
+
+        timeoutMs: 3_000,
+        maxAttempts: 1,
+      },
+    );
+
+    // Register rejection assertion immediately.
+    const rejection = expect(p).rejects.toThrow(
+      /timed out|PAIRING FAILED/i,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sent.length).toBe(1);
+
+    const {
+      decodeBinaryNode,
+    } = await import(
+      "../src/WABinary/decode.js"
+    );
+
+    const {
+      getBinaryNodeAttr,
+    } = await import(
+      "../src/WABinary/index.js"
+    );
+
+    const iqId = getBinaryNodeAttr(
+      decodeBinaryNode(sent[0]!),
+      "id",
+    )!;
+
+    expect(iqId).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    // Consume expected timeout rejection.
+    await rejection;
+
+    // Late response must be ignored.
+    expect(() => {
+      ctrl.onPayload(
+        makeCodeResultNode(
+          iqId,
+          "LATECODE",
+        ),
       );
+    }).not.toThrow();
 
-      await handled;
-
-      expect(
-        caughtError,
-      ).toBeInstanceOf(Error);
-
-      expect(
-        (caughtError as Error).message,
-      ).toMatch(
-        /timed out|PAIRING FAILED/i,
-      );
-
-      expect(() => {
-        ctrl.onPayload(
-          makeCodeResultNode(
-            iqId,
-            "LATECODE",
-          ),
-        );
-      }).not.toThrow();
-
-      expect(
-        ctrl.isBusy(),
-      ).toBe(false);
-
-      expect(
-        ctrl.pendingCount(),
-      ).toBe(0);
-    },
-  );
+    expect(ctrl.isBusy()).toBe(false);
+    expect(ctrl.pendingCount()).toBe(0);
+  },
+);
 
 
   it(
