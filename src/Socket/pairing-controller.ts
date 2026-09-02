@@ -265,8 +265,7 @@ describe("pairing-controller", () => {
           "id",
         )!;
 
-      // Attempt 2 starts after the first
-      // attempt window.
+      // Attempt 2 starts after 5 seconds.
       await vi.advanceTimersByTimeAsync(
         5_000,
       );
@@ -285,7 +284,7 @@ describe("pairing-controller", () => {
         secondId,
       ).not.toBe(firstId);
 
-      // Response from attempt 1 is stale.
+      // Old attempt must be ignored.
       ctrl.onPayload(
         makeCodeResultNode(
           firstId,
@@ -297,7 +296,7 @@ describe("pairing-controller", () => {
         ctrl.pendingCount(),
       ).toBe(1);
 
-      // Response from active attempt resolves.
+      // Active attempt resolves.
       ctrl.onPayload(
         makeCodeResultNode(
           secondId,
@@ -317,6 +316,9 @@ describe("pairing-controller", () => {
   it(
     "TEST 5: response with wrong IQ id is ignored",
     async () => {
+      // This test intentionally uses real timers.
+      vi.useRealTimers();
+
       const ctrl =
         createPairingController();
 
@@ -328,27 +330,16 @@ describe("pairing-controller", () => {
           {
             session: fakeSession(),
             send: (b) => sent.push(b),
-            timeoutMs: 5_000,
+            timeoutMs: 20,
             maxAttempts: 1,
           },
         );
 
-      /*
-       * IMPORTANT:
-       * Attach a rejection handler immediately,
-       * before advancing fake timers.
-       */
-      const result = p.then(
-        () => {
-          throw new Error(
-            "Expected pairing request to timeout",
-          );
-        },
-        (err) => err,
-      );
+      expect(
+        sent.length,
+      ).toBe(1);
 
-      await vi.advanceTimersByTimeAsync(0);
-
+      // Wrong IQ must be ignored.
       ctrl.onPayload(
         makeCodeResultNode(
           "WRONG_ID_XXXX",
@@ -360,8 +351,14 @@ describe("pairing-controller", () => {
         ctrl.pendingCount(),
       ).toBe(1);
 
-      await vi.advanceTimersByTimeAsync(
-        5_100,
+      // Handle rejection immediately.
+      const result = p.then(
+        () => {
+          throw new Error(
+            "Expected pairing request to timeout",
+          );
+        },
+        (err) => err,
       );
 
       const err =
@@ -386,6 +383,9 @@ describe("pairing-controller", () => {
   it(
     "TEST 6: response after timeout is ignored (no throw)",
     async () => {
+      // This test intentionally uses real timers.
+      vi.useRealTimers();
+
       const ctrl =
         createPairingController();
 
@@ -397,26 +397,14 @@ describe("pairing-controller", () => {
           {
             session: fakeSession(),
             send: (b) => sent.push(b),
-            timeoutMs: 3_000,
+            timeoutMs: 20,
             maxAttempts: 1,
           },
         );
 
-      /*
-       * IMPORTANT:
-       * Attach rejection handler immediately,
-       * before advancing fake timers.
-       */
-      const result = p.then(
-        () => {
-          throw new Error(
-            "Expected pairing request to timeout",
-          );
-        },
-        (err) => err,
-      );
-
-      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        sent.length,
+      ).toBe(1);
 
       const { decodeBinaryNode } =
         await import("../src/WABinary/decode.js");
@@ -430,8 +418,14 @@ describe("pairing-controller", () => {
           "id",
         )!;
 
-      await vi.advanceTimersByTimeAsync(
-        3_100,
+      // Attach rejection handler immediately.
+      const result = p.then(
+        () => {
+          throw new Error(
+            "Expected pairing request to timeout",
+          );
+        },
+        (err) => err,
       );
 
       const err =
