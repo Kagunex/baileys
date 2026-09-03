@@ -1,60 +1,41 @@
-name: Extract ZIP To Repository
+name: Build Project
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - master
+  pull_request:
 
 jobs:
-  extract:
+  build:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Find ZIP
-        id: zip
+      - name: Setup Node and Corepack
+        uses: actions/setup-node@v3.6.0
+        with:
+          node-version: 20.x
+
+      - name: Enable Corepack and Set Yarn Version
         run: |
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
+          corepack enable
+          corepack prepare yarn@4.x --activate
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "No ZIP file found."
-            exit 1
-          fi
+      - name: Restore Yarn Cache
+        uses: actions/cache@v3
+        id: yarn-cache
+        with:
+          path: .yarn/cache
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
 
-          echo "zip=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+      - name: Install dependencies
+        run: yarn install --immutable
 
-      - name: Extract ZIP
-        run: |
-          rm -rf /tmp/extract
-          mkdir -p /tmp/extract
-
-          unzip -q "${{ steps.zip.outputs.zip }}" -d /tmp/extract
-
-          ROOT_COUNT=$(find /tmp/extract -mindepth 1 -maxdepth 1 | wc -l)
-
-          if [ "$ROOT_COUNT" -eq 1 ] && [ -d "$(find /tmp/extract -mindepth 1 -maxdepth 1 -type d)" ]; then
-            SOURCE_DIR=$(find /tmp/extract -mindepth 1 -maxdepth 1 -type d)
-            cp -a "$SOURCE_DIR"/. .
-          else
-            cp -a /tmp/extract/. .
-          fi
-
-          rm -f "${{ steps.zip.outputs.zip }}"
-
-      - name: Commit changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "chore: extract source"
-          git push
+      - name: Build project
+        run: yarn build
+        
