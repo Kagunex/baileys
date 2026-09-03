@@ -1,40 +1,37 @@
-name: Build Project
+name: Delete Repository Files
 
 on:
-  push:
-    branches:
-      - master
-  pull_request:
+  workflow_dispatch:
 
 jobs:
-  build:
+  delete-files:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Node and Corepack
-        uses: actions/setup-node@v3.6.0
-        with:
-          node-version: 20.x
-
-      - name: Enable Corepack and Set Yarn Version
+      - name: Delete all files except .git and .github
         run: |
-          corepack enable
-          corepack prepare yarn@4.x --activate
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name ".git" \
+            ! -name ".github" \
+            -exec rm -rf {} +
 
-      - name: Restore Yarn Cache
-        uses: actions/cache@v3
-        id: yarn-cache
-        with:
-          path: .yarn/cache
-          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-yarn-
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Install dependencies
-        run: yarn install --immutable
+          git add -A
 
-      - name: Build project
-        run: yarn build
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: clean repository"
+          git push
