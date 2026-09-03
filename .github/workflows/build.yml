@@ -1,10 +1,10 @@
-name: Delete Repository Files
+name: Extract ZIP To Repository
 
 on:
   workflow_dispatch:
 
 jobs:
-  delete-files:
+  extract:
     runs-on: ubuntu-latest
 
     permissions:
@@ -14,12 +14,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Delete all files except .git and .github
+      - name: Find ZIP
+        id: zip
         run: |
-          find . -mindepth 1 -maxdepth 1 \
-            ! -name ".git" \
-            ! -name ".github" \
-            -exec rm -rf {} +
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No ZIP file found."
+            exit 1
+          fi
+
+          echo "zip=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Extract ZIP
+        run: |
+          rm -rf /tmp/extract
+          mkdir -p /tmp/extract
+
+          unzip -q "${{ steps.zip.outputs.zip }}" -d /tmp/extract
+
+          ROOT_COUNT=$(find /tmp/extract -mindepth 1 -maxdepth 1 | wc -l)
+
+          if [ "$ROOT_COUNT" -eq 1 ] && [ -d "$(find /tmp/extract -mindepth 1 -maxdepth 1 -type d)" ]; then
+            SOURCE_DIR=$(find /tmp/extract -mindepth 1 -maxdepth 1 -type d)
+            cp -a "$SOURCE_DIR"/. .
+          else
+            cp -a /tmp/extract/. .
+          fi
+
+          rm -f "${{ steps.zip.outputs.zip }}"
 
       - name: Commit changes
         run: |
@@ -33,5 +56,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "chore: clean repository"
+          git commit -m "chore: extract source"
           git push
