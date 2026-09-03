@@ -53,7 +53,7 @@ try {
 }
 
 check("name is @kagunex/baileys", pkg.name === "@kagunex/baileys");
-check("version is 1.8.5-rc2", pkg.version === "1.8.5-rc1");
+check("version is 1.8.5-rc2", pkg.version === "1.8.5-rc2");
 
 const failed = checks.filter((c) => !c.ok);
 if (failed.length) {
