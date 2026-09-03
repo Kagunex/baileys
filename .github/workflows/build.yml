@@ -1,62 +1,40 @@
-name: Extract ZIP
+name: Build Project
 
 on:
-  workflow_dispatch:
-
-permissions:
-  contents: write
+  push:
+    branches:
+      - master
+  pull_request:
 
 jobs:
-  extract:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
+
+      - name: Setup Node and Corepack
+        uses: actions/setup-node@v3.6.0
         with:
-          fetch-depth: 0
+          node-version: 20.x
 
-      - name: Find ZIP
+      - name: Enable Corepack and Set Yarn Version
         run: |
-          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+          corepack enable
+          corepack prepare yarn@4.x --activate
 
-          if [ -z "$ZIP" ]; then
-            echo "ZIP tidak ditemukan."
-            exit 1
-          fi
+      - name: Restore Yarn Cache
+        uses: actions/cache@v3
+        id: yarn-cache
+        with:
+          path: .yarn/cache
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
 
-          echo "ZIP: $ZIP"
-          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+      - name: Install dependencies
+        run: yarn install --immutable
 
-      - name: Extract ZIP
-        run: |
-          mkdir -p /tmp/extract
-
-          unzip -q "$ZIP" -d /tmp/extract
-
-      - name: Move extracted source to root
-        run: |
-          shopt -s dotglob nullglob
-
-          ITEMS=(/tmp/extract/*)
-
-          if [ "${#ITEMS[@]}" -eq 1 ] && [ -d "${ITEMS[0]}" ]; then
-            cp -a "${ITEMS[0]}"/. .
-          else
-            cp -a /tmp/extract/. .
-          fi
-
-      - name: Remove ZIP
-        run: |
-          rm -f "$ZIP"
-
-      - name: Commit and Push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A
-
-          git commit -m "chore: extract source" || echo "No changes"
-
-          git push
+      - name: Build project
+        run: yarn build
