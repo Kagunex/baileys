@@ -1,1 +1,0 @@
-{"version":3,"file":"qr.js","sourceRoot":"","sources":["../../src/Web/qr.ts"],"names":[],"mappings":"AAAA;;;;;;GAMG;AAEH,MAAM,UAAU,iBAAiB,CAAC,EAAU;IAC1C,OAAO,CAAC,GAAG,CAAC,uBAAuB,CAAC,CAAC;IACrC,OAAO,CAAC,GAAG,CAAC,EAAE,CAAC,CAAC;AAClB,CAAC;AAED,MAAM,UAAU,kBAAkB,CAAC,EAAU;IAC3C,OAAO,EAAE,CAAC;AACZ,CAAC"}
